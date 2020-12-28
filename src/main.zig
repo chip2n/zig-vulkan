@@ -17,7 +17,7 @@ fn debugCallback(
     pCallbackData: [*c]const VkDebugUtilsMessengerCallbackDataEXT,
     pUserData: ?*c_void,
 ) callconv(.C) u32 {
-    const msg = pCallbackData.*.pMessage;
+    const msg = @ptrCast([*:0]const u8, pCallbackData.*.pMessage);
     log.err("validation layer: {}", .{msg});
 
     return VK_FALSE;
@@ -35,6 +35,21 @@ fn CreateDebugUtilsMessengerEXT(
     )) orelse return VkResult.VK_ERROR_EXTENSION_NOT_PRESENT;
 
     return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+}
+
+fn DestroyDebugUtilsMessengerEXT(
+    instance: VkInstance,
+    debugMessenger: VkDebugUtilsMessengerEXT,
+    pAllocator: ?*const VkAllocationCallbacks,
+) void {
+    const optional_func = @ptrCast(PFN_vkDestroyDebugUtilsMessengerEXT, vkGetInstanceProcAddr(
+        instance,
+        "vkDestroyDebugUtilsMessengerEXT",
+    ));
+
+    if (optional_func) |func| {
+        return func(instance, debugMessenger, pAllocator);
+    }
 }
 
 pub fn main() !void {
@@ -121,7 +136,7 @@ const Vulkan = struct {
 
         return Vulkan{
             .instance = instance,
-            .debugMessenger = null,
+            .debugMessenger = debugMessenger,
         };
     }
 
@@ -147,6 +162,9 @@ const Vulkan = struct {
     }
 
     pub fn deinit(self: *const Vulkan) void {
+        if (self.debugMessenger) |messenger| {
+            DestroyDebugUtilsMessengerEXT(self.instance, messenger, null);
+        }
         vkDestroyInstance(self.instance, null);
     }
 };
