@@ -1,12 +1,14 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const log = std.log;
+const log = std.log.scoped(.vulkan_validation_layer);
 
 usingnamespace @import("c.zig");
 
 const WIDTH = 800;
 const HEIGHT = 600;
+
+pub const log_level: std.log.Level = .warn;
 
 const enableValidationLayers = std.debug.runtime_safety;
 const validationLayers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
@@ -18,7 +20,17 @@ fn debugCallback(
     pUserData: ?*c_void,
 ) callconv(.C) u32 {
     const msg = @ptrCast([*:0]const u8, pCallbackData.*.pMessage);
-    log.err("validation layer: {}", .{msg});
+
+    const severity = @enumToInt(messageSeverity);
+    if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        log.err("{}", .{msg});
+    } else if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        log.warn("{}", .{msg});
+    } else if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) {
+        log.info("{}", .{msg});
+    } else if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT) {
+        log.debug("{}", .{msg});
+    }
 
     return VK_FALSE;
 }
@@ -115,16 +127,26 @@ const Vulkan = struct {
         const extensions = try getRequiredExtensions(allocator);
         defer allocator.free(extensions);
 
-        const createInfo = VkInstanceCreateInfo{
+        var createInfo = VkInstanceCreateInfo{
             .sType = VkStructureType.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
             .pApplicationInfo = &appInfo,
-            .enabledLayerCount = if (enableValidationLayers) validationLayers.len else 0,
-            .ppEnabledLayerNames = if (enableValidationLayers) &validationLayers else null,
+            .enabledLayerCount = 0,
+            .ppEnabledLayerNames = null,
             .enabledExtensionCount = @intCast(u32, extensions.len),
             .ppEnabledExtensionNames = extensions.ptr,
         };
+
+        // placed outside scope to ensure it's not destroyed before the call to vkCreateInstance
+        var debugCreateInfo: VkDebugUtilsMessengerCreateInfoEXT = undefined;
+        if (enableValidationLayers) {
+            createInfo.enabledLayerCount = validationLayers.len;
+            createInfo.ppEnabledLayerNames = &validationLayers;
+
+            debugCreateInfo = createDebugMessengerCreateInfo();
+            createInfo.pNext = &debugCreateInfo;
+        }
 
         var instance: VkInstance = undefined;
         const result = vkCreateInstance(&createInfo, null, &instance);
@@ -140,10 +162,8 @@ const Vulkan = struct {
         };
     }
 
-    fn initDebugMessenger(instance: VkInstance) !VkDebugUtilsMessengerEXT {
-        if (!enableValidationLayers) return;
-
-        const createInfo = VkDebugUtilsMessengerCreateInfoEXT{
+    fn createDebugMessengerCreateInfo() VkDebugUtilsMessengerCreateInfoEXT {
+        return VkDebugUtilsMessengerCreateInfoEXT{
             .sType = VkStructureType.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
             .pNext = null,
             .flags = 0,
@@ -152,6 +172,12 @@ const Vulkan = struct {
             .pfnUserCallback = debugCallback,
             .pUserData = null,
         };
+    }
+
+    fn initDebugMessenger(instance: VkInstance) !VkDebugUtilsMessengerEXT {
+        if (!enableValidationLayers) return;
+
+        const createInfo = createDebugMessengerCreateInfo();
 
         var debugMessenger: VkDebugUtilsMessengerEXT = undefined;
         if (CreateDebugUtilsMessengerEXT(instance, &createInfo, null, &debugMessenger) != VkResult.VK_SUCCESS) {
