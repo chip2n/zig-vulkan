@@ -150,9 +150,8 @@ fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDe
         return error.VulkanFailedToFindSupportedGPU;
     }
 
-    var devices = try allocator.alloc(VkPhysicalDevice, deviceCount);
+    const devices = try allocator.alloc(VkPhysicalDevice, deviceCount);
     defer allocator.free(devices);
-
     try checkSuccess(vkEnumeratePhysicalDevices(instance, &deviceCount, devices.ptr));
 
     const physicalDevice = for (devices) |device| {
@@ -165,5 +164,37 @@ fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDe
 }
 
 fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice) !bool {
-    return true;
+    const indices = try findQueueFamilies(allocator, device);
+    return indices.isComplete();
+}
+
+const QueueFamilyIndices = struct {
+    graphicsFamily: ?u32,
+
+    pub fn isComplete(self: QueueFamilyIndices) bool {
+        return self.graphicsFamily != null;
+    }
+};
+
+fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice) !QueueFamilyIndices {
+    var indices = QueueFamilyIndices{ .graphicsFamily = null };
+
+    var queueFamilyCount: u32 = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, null);
+
+    const queueFamilies = try allocator.alloc(VkQueueFamilyProperties, queueFamilyCount);
+    defer allocator.free(queueFamilies);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.ptr);
+
+    for (queueFamilies) |family, i| {
+        if (family.queueFlags & @intCast(u32, VK_QUEUE_GRAPHICS_BIT) == 0) {
+            indices.graphicsFamily = @intCast(u32, i);
+        }
+
+        if (indices.isComplete()) {
+            break;
+        }
+    }
+
+    return indices;
 }
