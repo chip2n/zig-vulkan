@@ -56,6 +56,7 @@ const GLFW = struct {
 
 const Vulkan = struct {
     instance: VkInstance,
+    physicalDevice: VkPhysicalDevice,
     debugMessenger: ?VkDebugUtilsMessengerEXT,
 
     pub fn init(allocator: *Allocator) !Vulkan {
@@ -107,8 +108,11 @@ const Vulkan = struct {
             debugMessenger = try dbg.initDebugMessenger(instance);
         }
 
+        const physicalDevice = try pickPhysicalDevice(allocator, instance);
+
         return Vulkan{
             .instance = instance,
+            .physicalDevice = physicalDevice,
             .debugMessenger = debugMessenger,
         };
     }
@@ -136,4 +140,30 @@ fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
     }
 
     return extensions.toOwnedSlice();
+}
+
+fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDevice {
+    var deviceCount: u32 = 0;
+    try checkSuccess(vkEnumeratePhysicalDevices(instance, &deviceCount, null));
+
+    if (deviceCount == 0) {
+        return error.VulkanFailedToFindSupportedGPU;
+    }
+
+    var devices = try allocator.alloc(VkPhysicalDevice, deviceCount);
+    defer allocator.free(devices);
+
+    try checkSuccess(vkEnumeratePhysicalDevices(instance, &deviceCount, devices.ptr));
+
+    const physicalDevice = for (devices) |device| {
+        if (try isDeviceSuitable(allocator, device)) {
+            break device;
+        }
+    } else return error.VulkanFailedToFindSuitableGPU;
+
+    return physicalDevice;
+}
+
+fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice) !bool {
+    return true;
 }
