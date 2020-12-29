@@ -58,6 +58,7 @@ const Vulkan = struct {
     instance: VkInstance,
     physicalDevice: VkPhysicalDevice,
     logicalDevice: VkDevice,
+    graphicsQueue: VkQueue,
     debugMessenger: ?VkDebugUtilsMessengerEXT,
 
     pub fn init(allocator: *Allocator) !Vulkan {
@@ -112,10 +113,21 @@ const Vulkan = struct {
         const physicalDevice = try pickPhysicalDevice(allocator, instance);
         const logicalDevice = try createLogicalDevice(allocator, physicalDevice);
 
+        const indices = try findQueueFamilies(allocator, physicalDevice); // TODO reuse
+
+        var graphicsQueue: VkQueue = undefined;
+        vkGetDeviceQueue(
+            logicalDevice,
+            indices.graphicsFamily.?, // TODO
+            0,
+            &graphicsQueue,
+        );
+
         return Vulkan{
             .instance = instance,
             .physicalDevice = physicalDevice,
             .logicalDevice = logicalDevice,
+            .graphicsQueue = graphicsQueue,
             .debugMessenger = debugMessenger,
         };
     }
