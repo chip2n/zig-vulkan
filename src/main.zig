@@ -148,7 +148,10 @@ fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
 
 fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDevice {
     var deviceCount: u32 = 0;
-    try checkSuccess(vkEnumeratePhysicalDevices(instance, &deviceCount, null));
+    try checkSuccess(
+        vkEnumeratePhysicalDevices(instance, &deviceCount, null),
+        error.VulkanPhysicalDeviceEnumerationFailed,
+    );
 
     if (deviceCount == 0) {
         return error.VulkanFailedToFindSupportedGPU;
@@ -156,7 +159,10 @@ fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDe
 
     const devices = try allocator.alloc(VkPhysicalDevice, deviceCount);
     defer allocator.free(devices);
-    try checkSuccess(vkEnumeratePhysicalDevices(instance, &deviceCount, devices.ptr));
+    try checkSuccess(
+        vkEnumeratePhysicalDevices(instance, &deviceCount, devices.ptr),
+        error.VulkanPhysicalDeviceEnumerationFailed,
+    );
 
     const physicalDevice = for (devices) |device| {
         if (try isDeviceSuitable(allocator, device)) {
@@ -290,10 +296,11 @@ fn createLogicalDevice(allocator: *Allocator, physicalDevice: VkPhysicalDevice) 
     }
 
     var device: VkDevice = undefined;
-    const result = vkCreateDevice(physicalDevice, &createInfo, null, &device);
-    if (result != VkResult.VK_SUCCESS) {
-        return error.VulkanLogicalDeviceCreationFailed;
-    }
+
+    try checkSuccess(
+        vkCreateDevice(physicalDevice, &createInfo, null, &device),
+        error.VulkanLogicalDeviceCreationFailed,
+    );
 
     return device;
 }

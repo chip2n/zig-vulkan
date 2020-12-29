@@ -26,12 +26,25 @@ pub fn deinitDebugMessenger(instance: VkInstance, debugMessenger: VkDebugUtilsMe
 pub fn checkValidationLayerSupport(allocator: *Allocator) !bool {
     var layerCount: u32 = undefined;
 
-    try checkSuccess(vkEnumerateInstanceLayerProperties(&layerCount, null));
+    try checkSuccess(
+        vkEnumerateInstanceLayerProperties(&layerCount, null),
+        error.VulkanLayerPropsEnumerationFailed,
+    );
 
     const availableLayers = try allocator.alloc(VkLayerProperties, layerCount);
     defer allocator.free(availableLayers);
 
-    try checkSuccess(vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.ptr));
+    try checkSuccess(
+        vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.ptr),
+        error.VulkanLayerPropsEnumerationFailed,
+    );
+
+    if (checkSuccess(
+        vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.ptr),
+        error.VulkanLayerPropsEnumerationFailed,
+    )) {} else |err| switch (err) {
+        error.VulkanLayerPropsEnumerationFailed => log.warn("yee", .{}),
+    }
 
     for (validationLayers) |layerName| {
         var layerFound = false;
