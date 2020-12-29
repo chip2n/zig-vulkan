@@ -20,7 +20,9 @@ const device_extensions = [_][*:0]const u8{
 };
 
 pub fn main() !void {
-    const allocator = std.heap.c_allocator;
+    //const allocator = std.heap.c_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = &gpa.allocator;
 
     const glfw = try GLFW.init();
     defer glfw.deinit();
@@ -31,6 +33,7 @@ pub fn main() !void {
     while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
         glfwPollEvents();
     }
+    _ = gpa.detectLeaks();
 }
 
 const GLFW = struct {
