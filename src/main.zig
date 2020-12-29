@@ -113,8 +113,8 @@ const Vulkan = struct {
 
         const surface = try createSurface(instance, window);
 
-        const physicalDevice = try pickPhysicalDevice(allocator, instance);
-        const indices = try findQueueFamilies(allocator, physicalDevice);
+        const physicalDevice = try pickPhysicalDevice(allocator, instance, surface);
+        const indices = try findQueueFamilies(allocator, physicalDevice, surface);
 
         const logicalDevice = try createLogicalDevice(physicalDevice, indices);
 
@@ -163,7 +163,7 @@ fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
     return extensions.toOwnedSlice();
 }
 
-fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDevice {
+fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance, surface: VkSurfaceKHR) !VkPhysicalDevice {
     var deviceCount: u32 = 0;
     try checkSuccess(
         vkEnumeratePhysicalDevices(instance, &deviceCount, null),
@@ -182,7 +182,7 @@ fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDe
     );
 
     const physicalDevice = for (devices) |device| {
-        if (try isDeviceSuitable(allocator, device)) {
+        if (try isDeviceSuitable(allocator, device, surface)) {
             break device;
         }
     } else return error.VulkanFailedToFindSuitableGPU;
@@ -190,21 +190,22 @@ fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance) !VkPhysicalDe
     return physicalDevice;
 }
 
-fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice) !bool {
-    const indices = try findQueueFamilies(allocator, device);
+fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice, surface: VkSurfaceKHR) !bool {
+    const indices = try findQueueFamilies(allocator, device, surface);
     return indices.isComplete();
 }
 
 const QueueFamilyIndices = struct {
     graphicsFamily: ?u32,
+    presentFamily: ?u32,
 
     pub fn isComplete(self: QueueFamilyIndices) bool {
-        return self.graphicsFamily != null;
+        return self.graphicsFamily != null and self.presentFamily != null;
     }
 };
 
-fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice) !QueueFamilyIndices {
-    var indices = QueueFamilyIndices{ .graphicsFamily = null };
+fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice, surface: VkSurfaceKHR) !QueueFamilyIndices {
+    var indices = QueueFamilyIndices{ .graphicsFamily = null, .presentFamily = null };
 
     var queueFamilyCount: u32 = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, null);
@@ -213,14 +214,27 @@ fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice) !QueueFami
     defer allocator.free(queueFamilies);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.ptr);
 
-    for (queueFamilies) |family, i| {
+    // TODO(optimize): there might be a queue that supports all features, which would
+    // be better for performance
+    var i: u32 = 0;
+    for (queueFamilies) |family| {
         if (family.queueFlags & @intCast(u32, VK_QUEUE_GRAPHICS_BIT) == 0) {
             indices.graphicsFamily = @intCast(u32, i);
+        }
+
+        var presentSupport: VkBool32 = VK_FALSE;
+        try checkSuccess(
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport),
+            error.VulkanPresentSupportCheckFailed,
+        );
+        if (presentSupport == VK_TRUE) {
+            indices.presentFamily = @intCast(u32, i);
         }
 
         if (indices.isComplete()) {
             break;
         }
+        i += 1;
     }
 
     return indices;
