@@ -63,10 +63,15 @@ pub fn createDebugMessengerCreateInfo() VkDebugUtilsMessengerCreateInfoEXT {
     };
 }
 
-pub fn fillDebugMessengerInCreateInfo(createInfo: *VkInstanceCreateInfo, debugCreateInfo: *VkDebugUtilsMessengerCreateInfoEXT) void {
+pub fn fillDebugMessengerInInstanceCreateInfo(createInfo: *VkInstanceCreateInfo, debugCreateInfo: *VkDebugUtilsMessengerCreateInfoEXT) void {
     createInfo.enabledLayerCount = validationLayers.len;
     createInfo.ppEnabledLayerNames = &validationLayers;
     createInfo.pNext = debugCreateInfo;
+}
+
+pub fn fillDebugMessengerInDeviceCreateInfo(createInfo: *VkDeviceCreateInfo) void {
+    createInfo.enabledLayerCount = validationLayers.len;
+    createInfo.ppEnabledLayerNames = &validationLayers;
 }
 
 fn debugCallback(
