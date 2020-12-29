@@ -21,7 +21,7 @@ pub fn main() !void {
     const glfw = try GLFW.init();
     defer glfw.deinit();
 
-    var vulkan = try Vulkan.init(allocator);
+    var vulkan = try Vulkan.init(allocator, glfw.window);
     defer vulkan.deinit();
 
     while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
@@ -59,9 +59,10 @@ const Vulkan = struct {
     physicalDevice: VkPhysicalDevice,
     logicalDevice: VkDevice,
     graphicsQueue: VkQueue,
+    surface: VkSurfaceKHR,
     debugMessenger: ?VkDebugUtilsMessengerEXT,
 
-    pub fn init(allocator: *Allocator) !Vulkan {
+    pub fn init(allocator: *Allocator, window: *GLFWwindow) !Vulkan {
         if (enableValidationLayers) {
             if (!try dbg.checkValidationLayerSupport(allocator)) {
                 return error.ValidationLayerRequestedButNotAvailable;
@@ -110,6 +111,8 @@ const Vulkan = struct {
             debugMessenger = try dbg.initDebugMessenger(instance);
         }
 
+        const surface = try createSurface(instance, window);
+
         const physicalDevice = try pickPhysicalDevice(allocator, instance);
         const indices = try findQueueFamilies(allocator, physicalDevice);
 
@@ -128,6 +131,7 @@ const Vulkan = struct {
             .physicalDevice = physicalDevice,
             .logicalDevice = logicalDevice,
             .graphicsQueue = graphicsQueue,
+            .surface = surface,
             .debugMessenger = debugMessenger,
         };
     }
@@ -137,6 +141,7 @@ const Vulkan = struct {
         if (self.debugMessenger) |messenger| {
             dbg.deinitDebugMessenger(self.instance, messenger);
         }
+        vkDestroySurfaceKHR(self.instance, self.surface, null);
         vkDestroyInstance(self.instance, null);
     }
 };
@@ -314,4 +319,13 @@ fn createLogicalDevice(physicalDevice: VkPhysicalDevice, indices: QueueFamilyInd
     );
 
     return device;
+}
+
+fn createSurface(instance: VkInstance, window: *GLFWwindow) !VkSurfaceKHR {
+    var surface: VkSurfaceKHR = undefined;
+    try checkSuccess(
+        glfwCreateWindowSurface(instance, window, null, &surface),
+        error.VulkanWindowSurfaceCreationFailed,
+    );
+    return surface;
 }
