@@ -59,6 +59,7 @@ const Vulkan = struct {
     physicalDevice: VkPhysicalDevice,
     logicalDevice: VkDevice,
     graphicsQueue: VkQueue,
+    presentQueue: VkQueue,
     surface: VkSurfaceKHR,
     debugMessenger: ?VkDebugUtilsMessengerEXT,
 
@@ -116,7 +117,7 @@ const Vulkan = struct {
         const physicalDevice = try pickPhysicalDevice(allocator, instance, surface);
         const indices = try findQueueFamilies(allocator, physicalDevice, surface);
 
-        const logicalDevice = try createLogicalDevice(physicalDevice, indices);
+        const logicalDevice = try createLogicalDevice(allocator, physicalDevice, indices);
 
         var graphicsQueue: VkQueue = undefined;
         vkGetDeviceQueue(
@@ -126,11 +127,20 @@ const Vulkan = struct {
             &graphicsQueue,
         );
 
+        var presentQueue: VkQueue = undefined;
+        vkGetDeviceQueue(
+            logicalDevice,
+            indices.presentFamily.?, // TODO
+            0,
+            &presentQueue,
+        );
+
         return Vulkan{
             .instance = instance,
             .physicalDevice = physicalDevice,
             .logicalDevice = logicalDevice,
             .graphicsQueue = graphicsQueue,
+            .presentQueue = presentQueue,
             .surface = surface,
             .debugMessenger = debugMessenger,
         };
@@ -240,16 +250,28 @@ fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice, surface: V
     return indices;
 }
 
-fn createLogicalDevice(physicalDevice: VkPhysicalDevice, indices: QueueFamilyIndices) !VkDevice {
-    var queuePriorities: f32 = 1.0;
-    const queueCreateInfo = VkDeviceQueueCreateInfo{
-        .sType = VkStructureType.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .pNext = null,
-        .flags = 0,
-        .queueFamilyIndex = indices.graphicsFamily.?,
-        .queueCount = 1,
-        .pQueuePriorities = &queuePriorities,
-    };
+fn createLogicalDevice(allocator: *Allocator, physicalDevice: VkPhysicalDevice, indices: QueueFamilyIndices) !VkDevice {
+    const all_queue_families = [_]u32{ indices.graphicsFamily.?, indices.presentFamily.? };
+    const uniqueQueueFamilies = if (indices.graphicsFamily.? == indices.presentFamily.?)
+        all_queue_families[0..1]
+    else
+        all_queue_families[0..2];
+
+    var queueCreateInfos = ArrayList(VkDeviceQueueCreateInfo).init(allocator);
+    defer queueCreateInfos.deinit();
+
+    var queuePriority: f32 = 1.0;
+    for (uniqueQueueFamilies) |queueFamily| {
+        const queueCreateInfo = VkDeviceQueueCreateInfo{
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .queueFamilyIndex = queueFamily,
+            .queueCount = 1,
+            .pQueuePriorities = &queuePriority,
+        };
+        try queueCreateInfos.append(queueCreateInfo);
+    }
 
     const deviceFeatures = VkPhysicalDeviceFeatures{
         .robustBufferAccess = 0,
@@ -312,8 +334,8 @@ fn createLogicalDevice(physicalDevice: VkPhysicalDevice, indices: QueueFamilyInd
         .sType = VkStructureType.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .pQueueCreateInfos = &queueCreateInfo,
-        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = queueCreateInfos.items.ptr,
+        .queueCreateInfoCount = @intCast(u32, queueCreateInfos.items.len),
         .pEnabledFeatures = &deviceFeatures,
         .enabledExtensionCount = 0,
         .ppEnabledExtensionNames = null,
