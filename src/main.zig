@@ -370,7 +370,7 @@ fn createLogicalDevice(allocator: *Allocator, physical_device: VkPhysicalDevice,
         .queueCreateInfoCount = @intCast(u32, queue_create_infos.items.len),
         .pEnabledFeatures = &device_features,
         .ppEnabledExtensionNames = &device_extensions,
-        .enabledExtensionCount = device_extensions.len,
+        .enabledExtensionCount = @intCast(u32, device_extensions.len),
         .enabledLayerCount = 0,
         .ppEnabledLayerNames = null,
     };
