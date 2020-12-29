@@ -15,6 +15,10 @@ const HEIGHT = 600;
 
 const enable_validation_layers = std.debug.runtime_safety;
 
+const device_extensions = [_][*:0]const u8{
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+};
+
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
 
@@ -202,7 +206,35 @@ fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance, surface: VkSu
 
 fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice, surface: VkSurfaceKHR) !bool {
     const indices = try findQueueFamilies(allocator, device, surface);
-    return indices.isComplete();
+    const extensions_supported = checkDeviceExtensionSupport(allocator, device);
+    return indices.isComplete() and extensions_supported;
+}
+
+fn checkDeviceExtensionSupport(allocator: *Allocator, device: VkPhysicalDevice) !bool {
+    var extension_count: u32 = 0;
+    try checkSuccess(
+        vkEnumerateDeviceExtensionProperties(device, null, &extension_count, null),
+        error.VulkanExtensionPropsEnumerationFailed,
+    );
+
+    var available_extensions = try allocator.alloc(VkExtensionProperties, extension_count);
+    defer allocator.free(available_extensions);
+    try checkSuccess(
+        vkEnumerateDeviceExtensionProperties(device, null, &extension_count, available_extensions.ptr),
+        error.VulkanExtensionPropsEnumerationFailed,
+    );
+
+    var required_extensions = CStrHashMap.init(allocator);
+    defer required_extensions.deinit();
+    for (device_extensions) |extension| {
+        _ = try required_extensions.put(extension, {});
+    }
+
+    for (available_extensions) |extension| {
+        _ = required_extensions.remove(@ptrCast([*:0]const u8, &extension.extensionName));
+    }
+
+    return required_extensions.count() == 0;
 }
 
 const QueueFamilyIndices = struct {
