@@ -13,7 +13,7 @@ pub const log_level: std.log.Level = .warn;
 const WIDTH = 800;
 const HEIGHT = 600;
 
-const enableValidationLayers = std.debug.runtime_safety;
+const enable_validation_layers = std.debug.runtime_safety;
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
@@ -56,21 +56,21 @@ const GLFW = struct {
 
 const Vulkan = struct {
     instance: VkInstance,
-    physicalDevice: VkPhysicalDevice,
-    logicalDevice: VkDevice,
-    graphicsQueue: VkQueue,
-    presentQueue: VkQueue,
+    physical_device: VkPhysicalDevice,
+    logical_device: VkDevice,
+    graphics_queue: VkQueue,
+    present_queue: VkQueue,
     surface: VkSurfaceKHR,
-    debugMessenger: ?VkDebugUtilsMessengerEXT,
+    debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     pub fn init(allocator: *Allocator, window: *GLFWwindow) !Vulkan {
-        if (enableValidationLayers) {
+        if (enable_validation_layers) {
             if (!try dbg.checkValidationLayerSupport(allocator)) {
                 return error.ValidationLayerRequestedButNotAvailable;
             }
         }
 
-        const appInfo = VkApplicationInfo{
+        const app_info = VkApplicationInfo{
             .sType = VkStructureType.VK_STRUCTURE_TYPE_APPLICATION_INFO,
             .pNext = null,
             .pApplicationName = "Hello Triangle",
@@ -83,11 +83,11 @@ const Vulkan = struct {
         const extensions = try getRequiredExtensions(allocator);
         defer allocator.free(extensions);
 
-        var createInfo = VkInstanceCreateInfo{
+        var create_info = VkInstanceCreateInfo{
             .sType = VkStructureType.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
-            .pApplicationInfo = &appInfo,
+            .pApplicationInfo = &app_info,
             .enabledLayerCount = 0,
             .ppEnabledLayerNames = null,
             .enabledExtensionCount = @intCast(u32, extensions.len),
@@ -95,60 +95,60 @@ const Vulkan = struct {
         };
 
         // placed outside scope to ensure it's not destroyed before the call to vkCreateInstance
-        var debugCreateInfo: VkDebugUtilsMessengerCreateInfoEXT = undefined;
-        if (enableValidationLayers) {
-            debugCreateInfo = dbg.createDebugMessengerCreateInfo();
-            dbg.fillDebugMessengerInInstanceCreateInfo(&createInfo, &debugCreateInfo);
+        var debug_create_info: VkDebugUtilsMessengerCreateInfoEXT = undefined;
+        if (enable_validation_layers) {
+            debug_create_info = dbg.createDebugMessengerCreateInfo();
+            dbg.fillDebugMessengerInInstanceCreateInfo(&create_info, &debug_create_info);
         }
 
         var instance: VkInstance = undefined;
-        const result = vkCreateInstance(&createInfo, null, &instance);
+        const result = vkCreateInstance(&create_info, null, &instance);
         if (result != VkResult.VK_SUCCESS) {
             return error.VulkanInitializationFailed;
         }
 
-        var debugMessenger: VkDebugUtilsMessengerEXT = null;
-        if (enableValidationLayers) {
-            debugMessenger = try dbg.initDebugMessenger(instance);
+        var debug_messenger: VkDebugUtilsMessengerEXT = null;
+        if (enable_validation_layers) {
+            debug_messenger = try dbg.initDebugMessenger(instance);
         }
 
         const surface = try createSurface(instance, window);
 
-        const physicalDevice = try pickPhysicalDevice(allocator, instance, surface);
-        const indices = try findQueueFamilies(allocator, physicalDevice, surface);
+        const physical_device = try pickPhysicalDevice(allocator, instance, surface);
+        const indices = try findQueueFamilies(allocator, physical_device, surface);
 
-        const logicalDevice = try createLogicalDevice(allocator, physicalDevice, indices);
+        const logical_device = try createLogicalDevice(allocator, physical_device, indices);
 
-        var graphicsQueue: VkQueue = undefined;
+        var graphics_queue: VkQueue = undefined;
         vkGetDeviceQueue(
-            logicalDevice,
-            indices.graphicsFamily.?, // TODO
+            logical_device,
+            indices.graphics_family.?, // TODO
             0,
-            &graphicsQueue,
+            &graphics_queue,
         );
 
-        var presentQueue: VkQueue = undefined;
+        var present_queue: VkQueue = undefined;
         vkGetDeviceQueue(
-            logicalDevice,
-            indices.presentFamily.?, // TODO
+            logical_device,
+            indices.present_family.?, // TODO
             0,
-            &presentQueue,
+            &present_queue,
         );
 
         return Vulkan{
             .instance = instance,
-            .physicalDevice = physicalDevice,
-            .logicalDevice = logicalDevice,
-            .graphicsQueue = graphicsQueue,
-            .presentQueue = presentQueue,
+            .physical_device = physical_device,
+            .logical_device = logical_device,
+            .graphics_queue = graphics_queue,
+            .present_queue = present_queue,
             .surface = surface,
-            .debugMessenger = debugMessenger,
+            .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
-        vkDestroyDevice(self.logicalDevice, null);
-        if (self.debugMessenger) |messenger| {
+        vkDestroyDevice(self.logical_device, null);
+        if (self.debug_messenger) |messenger| {
             dbg.deinitDebugMessenger(self.instance, messenger);
         }
         vkDestroySurfaceKHR(self.instance, self.surface, null);
@@ -158,15 +158,15 @@ const Vulkan = struct {
 
 /// caller must free returned memory
 fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
-    var glfwExtensionCount: u32 = 0;
-    const glfwExtensions = @ptrCast([*]const [*:0]const u8, glfwGetRequiredInstanceExtensions(&glfwExtensionCount));
+    var glfw_extension_count: u32 = 0;
+    const glfw_extensions = @ptrCast([*]const [*:0]const u8, glfwGetRequiredInstanceExtensions(&glfw_extension_count));
 
     var extensions = ArrayList([*:0]const u8).init(allocator);
     errdefer extensions.deinit();
 
-    try extensions.appendSlice(glfwExtensions[0..glfwExtensionCount]);
+    try extensions.appendSlice(glfw_extensions[0..glfw_extension_count]);
 
-    if (enableValidationLayers) {
+    if (enable_validation_layers) {
         try extensions.append(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
@@ -174,30 +174,30 @@ fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
 }
 
 fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance, surface: VkSurfaceKHR) !VkPhysicalDevice {
-    var deviceCount: u32 = 0;
+    var device_count: u32 = 0;
     try checkSuccess(
-        vkEnumeratePhysicalDevices(instance, &deviceCount, null),
+        vkEnumeratePhysicalDevices(instance, &device_count, null),
         error.VulkanPhysicalDeviceEnumerationFailed,
     );
 
-    if (deviceCount == 0) {
+    if (device_count == 0) {
         return error.VulkanFailedToFindSupportedGPU;
     }
 
-    const devices = try allocator.alloc(VkPhysicalDevice, deviceCount);
+    const devices = try allocator.alloc(VkPhysicalDevice, device_count);
     defer allocator.free(devices);
     try checkSuccess(
-        vkEnumeratePhysicalDevices(instance, &deviceCount, devices.ptr),
+        vkEnumeratePhysicalDevices(instance, &device_count, devices.ptr),
         error.VulkanPhysicalDeviceEnumerationFailed,
     );
 
-    const physicalDevice = for (devices) |device| {
+    const physical_device = for (devices) |device| {
         if (try isDeviceSuitable(allocator, device, surface)) {
             break device;
         }
     } else return error.VulkanFailedToFindSuitableGPU;
 
-    return physicalDevice;
+    return physical_device;
 }
 
 fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice, surface: VkSurfaceKHR) !bool {
@@ -206,39 +206,39 @@ fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice, surface: Vk
 }
 
 const QueueFamilyIndices = struct {
-    graphicsFamily: ?u32,
-    presentFamily: ?u32,
+    graphics_family: ?u32,
+    present_family: ?u32,
 
     pub fn isComplete(self: QueueFamilyIndices) bool {
-        return self.graphicsFamily != null and self.presentFamily != null;
+        return self.graphics_family != null and self.present_family != null;
     }
 };
 
 fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice, surface: VkSurfaceKHR) !QueueFamilyIndices {
-    var indices = QueueFamilyIndices{ .graphicsFamily = null, .presentFamily = null };
+    var indices = QueueFamilyIndices{ .graphics_family = null, .present_family = null };
 
-    var queueFamilyCount: u32 = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, null);
+    var queue_family_count: u32 = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, null);
 
-    const queueFamilies = try allocator.alloc(VkQueueFamilyProperties, queueFamilyCount);
-    defer allocator.free(queueFamilies);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.ptr);
+    const queue_families = try allocator.alloc(VkQueueFamilyProperties, queue_family_count);
+    defer allocator.free(queue_families);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_families.ptr);
 
     // TODO(optimize): there might be a queue that supports all features, which would
     // be better for performance
     var i: u32 = 0;
-    for (queueFamilies) |family| {
+    for (queue_families) |family| {
         if (family.queueFlags & @intCast(u32, VK_QUEUE_GRAPHICS_BIT) == 0) {
-            indices.graphicsFamily = @intCast(u32, i);
+            indices.graphics_family = @intCast(u32, i);
         }
 
-        var presentSupport: VkBool32 = VK_FALSE;
+        var present_support: VkBool32 = VK_FALSE;
         try checkSuccess(
-            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport),
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &present_support),
             error.VulkanPresentSupportCheckFailed,
         );
-        if (presentSupport == VK_TRUE) {
-            indices.presentFamily = @intCast(u32, i);
+        if (present_support == VK_TRUE) {
+            indices.present_family = @intCast(u32, i);
         }
 
         if (indices.isComplete()) {
@@ -250,30 +250,30 @@ fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice, surface: V
     return indices;
 }
 
-fn createLogicalDevice(allocator: *Allocator, physicalDevice: VkPhysicalDevice, indices: QueueFamilyIndices) !VkDevice {
-    const all_queue_families = [_]u32{ indices.graphicsFamily.?, indices.presentFamily.? };
-    const uniqueQueueFamilies = if (indices.graphicsFamily.? == indices.presentFamily.?)
+fn createLogicalDevice(allocator: *Allocator, physical_device: VkPhysicalDevice, indices: QueueFamilyIndices) !VkDevice {
+    const all_queue_families = [_]u32{ indices.graphics_family.?, indices.present_family.? };
+    const unique_queue_families = if (indices.graphics_family.? == indices.present_family.?)
         all_queue_families[0..1]
     else
         all_queue_families[0..2];
 
-    var queueCreateInfos = ArrayList(VkDeviceQueueCreateInfo).init(allocator);
-    defer queueCreateInfos.deinit();
+    var queue_create_infos = ArrayList(VkDeviceQueueCreateInfo).init(allocator);
+    defer queue_create_infos.deinit();
 
-    var queuePriority: f32 = 1.0;
-    for (uniqueQueueFamilies) |queueFamily| {
-        const queueCreateInfo = VkDeviceQueueCreateInfo{
+    var queue_priority: f32 = 1.0;
+    for (unique_queue_families) |queue_family| {
+        const queue_create_info = VkDeviceQueueCreateInfo{
             .sType = VkStructureType.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
-            .queueFamilyIndex = queueFamily,
+            .queueFamilyIndex = queue_family,
             .queueCount = 1,
-            .pQueuePriorities = &queuePriority,
+            .pQueuePriorities = &queue_priority,
         };
-        try queueCreateInfos.append(queueCreateInfo);
+        try queue_create_infos.append(queue_create_info);
     }
 
-    const deviceFeatures = VkPhysicalDeviceFeatures{
+    const device_features = VkPhysicalDeviceFeatures{
         .robustBufferAccess = 0,
         .fullDrawIndexUint32 = 0,
         .imageCubeArray = 0,
@@ -330,27 +330,27 @@ fn createLogicalDevice(allocator: *Allocator, physicalDevice: VkPhysicalDevice, 
         .variableMultisampleRate = 0,
         .inheritedQueries = 0,
     };
-    var createInfo = VkDeviceCreateInfo{
+    var create_info = VkDeviceCreateInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .pQueueCreateInfos = queueCreateInfos.items.ptr,
-        .queueCreateInfoCount = @intCast(u32, queueCreateInfos.items.len),
-        .pEnabledFeatures = &deviceFeatures,
+        .pQueueCreateInfos = queue_create_infos.items.ptr,
+        .queueCreateInfoCount = @intCast(u32, queue_create_infos.items.len),
+        .pEnabledFeatures = &device_features,
         .enabledExtensionCount = 0,
         .ppEnabledExtensionNames = null,
         .enabledLayerCount = 0,
         .ppEnabledLayerNames = null,
     };
 
-    if (enableValidationLayers) {
-        dbg.fillDebugMessengerInDeviceCreateInfo(&createInfo);
+    if (enable_validation_layers) {
+        dbg.fillDebugMessengerInDeviceCreateInfo(&create_info);
     }
 
     var device: VkDevice = undefined;
 
     try checkSuccess(
-        vkCreateDevice(physicalDevice, &createInfo, null, &device),
+        vkCreateDevice(physical_device, &create_info, null, &device),
         error.VulkanLogicalDeviceCreationFailed,
     );
 

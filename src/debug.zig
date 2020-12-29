@@ -6,57 +6,57 @@ const log = std.log.scoped(.vulkan_validation_layer);
 usingnamespace @import("c.zig");
 usingnamespace @import("utils.zig");
 
-const validationLayers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
+const validation_layers = [_][*:0]const u8{"VK_LAYER_KHRONOS_validation"};
 
 pub fn initDebugMessenger(instance: VkInstance) !VkDebugUtilsMessengerEXT {
-    const createInfo = createDebugMessengerCreateInfo();
+    const create_info = createDebugMessengerCreateInfo();
 
-    var debugMessenger: VkDebugUtilsMessengerEXT = undefined;
-    if (CreateDebugUtilsMessengerEXT(instance, &createInfo, null, &debugMessenger) != VkResult.VK_SUCCESS) {
+    var debug_messenger: VkDebugUtilsMessengerEXT = undefined;
+    if (CreateDebugUtilsMessengerEXT(instance, &create_info, null, &debug_messenger) != VkResult.VK_SUCCESS) {
         return error.VulkanDebugMessengerSetupFailed;
     }
 
-    return debugMessenger;
+    return debug_messenger;
 }
 
-pub fn deinitDebugMessenger(instance: VkInstance, debugMessenger: VkDebugUtilsMessengerEXT) void {
-    DestroyDebugUtilsMessengerEXT(instance, debugMessenger, null);
+pub fn deinitDebugMessenger(instance: VkInstance, debug_messenger: VkDebugUtilsMessengerEXT) void {
+    DestroyDebugUtilsMessengerEXT(instance, debug_messenger, null);
 }
 
 pub fn checkValidationLayerSupport(allocator: *Allocator) !bool {
-    var layerCount: u32 = undefined;
+    var layer_count: u32 = undefined;
 
     try checkSuccess(
-        vkEnumerateInstanceLayerProperties(&layerCount, null),
+        vkEnumerateInstanceLayerProperties(&layer_count, null),
         error.VulkanLayerPropsEnumerationFailed,
     );
 
-    const availableLayers = try allocator.alloc(VkLayerProperties, layerCount);
-    defer allocator.free(availableLayers);
+    const available_layers = try allocator.alloc(VkLayerProperties, layer_count);
+    defer allocator.free(available_layers);
 
     try checkSuccess(
-        vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.ptr),
+        vkEnumerateInstanceLayerProperties(&layer_count, available_layers.ptr),
         error.VulkanLayerPropsEnumerationFailed,
     );
 
     if (checkSuccess(
-        vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.ptr),
+        vkEnumerateInstanceLayerProperties(&layer_count, available_layers.ptr),
         error.VulkanLayerPropsEnumerationFailed,
     )) {} else |err| switch (err) {
         error.VulkanLayerPropsEnumerationFailed => log.warn("yee", .{}),
     }
 
-    for (validationLayers) |layerName| {
-        var layerFound = false;
+    for (validation_layers) |layer_name| {
+        var layer_found = false;
 
-        for (availableLayers) |layerProperties| {
-            if (std.cstr.cmp(layerName, @ptrCast([*:0]const u8, &layerProperties.layerName)) == 0) {
-                layerFound = true;
+        for (available_layers) |layer_properties| {
+            if (std.cstr.cmp(layer_name, @ptrCast([*:0]const u8, &layer_properties.layerName)) == 0) {
+                layer_found = true;
                 break;
             }
         }
 
-        if (!layerFound) {
+        if (!layer_found) {
             return false;
         }
     }
@@ -76,15 +76,15 @@ pub fn createDebugMessengerCreateInfo() VkDebugUtilsMessengerCreateInfoEXT {
     };
 }
 
-pub fn fillDebugMessengerInInstanceCreateInfo(createInfo: *VkInstanceCreateInfo, debugCreateInfo: *VkDebugUtilsMessengerCreateInfoEXT) void {
-    createInfo.enabledLayerCount = validationLayers.len;
-    createInfo.ppEnabledLayerNames = &validationLayers;
-    createInfo.pNext = debugCreateInfo;
+pub fn fillDebugMessengerInInstanceCreateInfo(create_info: *VkInstanceCreateInfo, debug_create_info: *VkDebugUtilsMessengerCreateInfoEXT) void {
+    create_info.enabledLayerCount = validation_layers.len;
+    create_info.ppEnabledLayerNames = &validation_layers;
+    create_info.pNext = debug_create_info;
 }
 
-pub fn fillDebugMessengerInDeviceCreateInfo(createInfo: *VkDeviceCreateInfo) void {
-    createInfo.enabledLayerCount = validationLayers.len;
-    createInfo.ppEnabledLayerNames = &validationLayers;
+pub fn fillDebugMessengerInDeviceCreateInfo(create_info: *VkDeviceCreateInfo) void {
+    create_info.enabledLayerCount = validation_layers.len;
+    create_info.ppEnabledLayerNames = &validation_layers;
 }
 
 fn debugCallback(
