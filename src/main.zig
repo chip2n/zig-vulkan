@@ -111,9 +111,9 @@ const Vulkan = struct {
         }
 
         const physicalDevice = try pickPhysicalDevice(allocator, instance);
-        const logicalDevice = try createLogicalDevice(allocator, physicalDevice);
+        const indices = try findQueueFamilies(allocator, physicalDevice);
 
-        const indices = try findQueueFamilies(allocator, physicalDevice); // TODO reuse
+        const logicalDevice = try createLogicalDevice(physicalDevice, indices);
 
         var graphicsQueue: VkQueue = undefined;
         vkGetDeviceQueue(
@@ -221,14 +221,13 @@ fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice) !QueueFami
     return indices;
 }
 
-fn createLogicalDevice(allocator: *Allocator, physicalDevice: VkPhysicalDevice) !VkDevice {
-    const indices = try findQueueFamilies(allocator, physicalDevice); // TODO reuse
+fn createLogicalDevice(physicalDevice: VkPhysicalDevice, indices: QueueFamilyIndices) !VkDevice {
     var queuePriorities: f32 = 1.0;
     const queueCreateInfo = VkDeviceQueueCreateInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .pNext = null,
         .flags = 0,
-        .queueFamilyIndex = indices.graphicsFamily.?, // TODO optional
+        .queueFamilyIndex = indices.graphicsFamily.?,
         .queueCount = 1,
         .pQueuePriorities = &queuePriorities,
     };
