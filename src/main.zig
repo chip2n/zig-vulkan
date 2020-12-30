@@ -260,8 +260,16 @@ fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance, surface: VkSu
 
 fn isDeviceSuitable(allocator: *Allocator, device: VkPhysicalDevice, surface: VkSurfaceKHR) !bool {
     const indices = try findQueueFamilies(allocator, device, surface);
-    const extensions_supported = checkDeviceExtensionSupport(allocator, device);
-    return indices.isComplete() and extensions_supported;
+    const extensions_supported = try checkDeviceExtensionSupport(allocator, device);
+
+    var swap_chain_adequate = false;
+    if (extensions_supported) {
+        const swap_chain_support = try querySwapChainSupport(allocator, device, surface);
+        defer swap_chain_support.deinit();
+        swap_chain_adequate = swap_chain_support.formats.len != 0 and swap_chain_support.present_modes.len != 0;
+    }
+
+    return indices.isComplete() and extensions_supported and swap_chain_adequate;
 }
 
 fn checkDeviceExtensionSupport(allocator: *Allocator, device: VkPhysicalDevice) !bool {
@@ -449,4 +457,73 @@ fn createSurface(instance: VkInstance, window: *GLFWwindow) !VkSurfaceKHR {
         error.VulkanWindowSurfaceCreationFailed,
     );
     return surface;
+}
+
+const SwapChainSupportDetails = struct {
+    allocator: *Allocator,
+    capabilities: VkSurfaceCapabilitiesKHR,
+    formats: []VkSurfaceFormatKHR,
+    present_modes: []VkPresentModeKHR,
+
+    fn init(
+        allocator: *Allocator,
+        capabilities: VkSurfaceCapabilitiesKHR,
+        formats: []VkSurfaceFormatKHR,
+        present_modes: []VkPresentModeKHR,
+    ) SwapChainSupportDetails {
+        return .{
+            .allocator = allocator,
+            .capabilities = capabilities,
+            .formats = formats,
+            .present_modes = present_modes,
+        };
+    }
+
+    fn deinit(self: @This()) void {
+        self.allocator.free(self.formats);
+        self.allocator.free(self.present_modes);
+    }
+};
+
+fn querySwapChainSupport(allocator: *Allocator, device: VkPhysicalDevice, surface: VkSurfaceKHR) !SwapChainSupportDetails {
+    var capabilities: VkSurfaceCapabilitiesKHR = undefined;
+    try checkSuccess(
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities),
+        error.VulkanSurfaceCapabilitiesQueryFailed,
+    );
+
+    var format_count: u32 = 0;
+    try checkSuccess(
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, null),
+        error.VulkanSurfaceFormatsQueryFailed,
+    );
+    var formats = try allocator.alloc(VkSurfaceFormatKHR, format_count);
+    errdefer allocator.free(formats);
+    if (format_count != 0) {
+        try checkSuccess(
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &format_count, formats.ptr),
+            error.VulkanSurfaceFormatsQueryFailed,
+        );
+    }
+
+    var present_mode_count: u32 = 0;
+    try checkSuccess(
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, null),
+        error.VulkanSurfacePresentModesQueryFailed,
+    );
+    var present_modes = try allocator.alloc(VkPresentModeKHR, present_mode_count);
+    errdefer allocator.free(present_modes);
+    if (present_mode_count != 0) {
+        try checkSuccess(
+            vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &present_mode_count, present_modes.ptr),
+            error.VulkanSurfacePresentModesQueryFailed,
+        );
+    }
+
+    return SwapChainSupportDetails.init(
+        allocator,
+        capabilities,
+        formats,
+        present_modes,
+    );
 }
