@@ -310,8 +310,7 @@ fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice, surface: V
     defer allocator.free(queue_families);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_families.ptr);
 
-    // TODO(optimize): there might be a queue that supports all features, which would
-    // be better for performance
+    // OPTIMIZE: use queue that supports all features if one is available
     var i: u32 = 0;
     for (queue_families) |family| {
         if (family.queueFlags & @intCast(u32, VK_QUEUE_GRAPHICS_BIT) == 0) {
