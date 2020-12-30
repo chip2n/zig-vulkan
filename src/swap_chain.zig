@@ -9,10 +9,10 @@ usingnamespace @import("utils.zig");
 pub const SwapChain = struct {
     allocator: *Allocator,
     swap_chain: VkSwapchainKHR,
-    swap_chain_images: []VkImage,
-    swap_chain_image_format: VkFormat,
-    swap_chain_extent: VkExtent2D,
-    swap_chain_image_views: []VkImageView,
+    images: []VkImage,
+    image_format: VkFormat,
+    extent: VkExtent2D,
+    image_views: []VkImageView,
 
     pub fn init(
         allocator: *Allocator,
@@ -44,38 +44,35 @@ pub const SwapChain = struct {
             vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, null),
             error.VulkanSwapChainImageRetrievalFailed,
         );
-        var swap_chain_images = try allocator.alloc(VkImage, image_count);
+        var images = try allocator.alloc(VkImage, image_count);
         try checkSuccess(
-            vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, swap_chain_images.ptr),
+            vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, images.ptr),
             error.VulkanSwapChainImageRetrievalFailed,
         );
-        // TODO reuse this
-        const swap_chain_surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats).format;
-        const swap_chain_extent = chooseSwapExtent(window, swap_chain_support.capabilities);
 
         const image_views = try createImageViews(
             allocator,
             logical_device,
-            swap_chain_images,
-            swap_chain_surface_format,
+            images,
+            surface_format.format,
         );
 
         return SwapChain{
             .allocator = allocator,
             .swap_chain = swap_chain,
-            .swap_chain_images = swap_chain_images,
-            .swap_chain_image_format = swap_chain_surface_format,
-            .swap_chain_extent = swap_chain_extent,
-            .swap_chain_image_views = image_views,
+            .images = images,
+            .image_format = surface_format.format,
+            .extent = extent,
+            .image_views = image_views,
         };
     }
 
     pub fn deinit(self: *const SwapChain, logical_device: VkDevice) void {
-        self.allocator.free(self.swap_chain_images);
-        for (self.swap_chain_image_views) |view| {
+        self.allocator.free(self.images);
+        for (self.image_views) |view| {
             vkDestroyImageView(logical_device, view, null);
         }
-        self.allocator.free(self.swap_chain_image_views);
+        self.allocator.free(self.image_views);
         vkDestroySwapchainKHR(logical_device, self.swap_chain, null);
     }
 };
