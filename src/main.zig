@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const log = std.log;
@@ -19,10 +20,57 @@ const device_extensions = [_][*:0]const u8{
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
+fn System() type {
+    if (builtin.mode == builtin.Mode.Debug) {
+        return DebugSystem();
+    } else {
+        return ReleaseSystem();
+    }
+}
+
+fn DebugSystem() type {
+    return struct {
+        const Self = @This();
+
+        gpa: std.heap.GeneralPurposeAllocator(.{}),
+
+        pub fn init() Self {
+            return .{
+                .gpa = std.heap.GeneralPurposeAllocator(.{}){},
+            };
+        }
+
+        pub fn allocator(self: *Self) *Allocator {
+            return &self.gpa.allocator;
+        }
+
+        pub fn deinit(self: *Self) void {
+            _ = self.gpa.detectLeaks();
+        }
+    };
+}
+
+pub fn ReleaseSystem() type {
+    return struct {
+        const Self = @This();
+
+        main_allocator: *Allocator,
+
+        pub fn init() Self {
+            return .{ .main_allocator = std.heap.c_allocator };
+        }
+
+        pub fn allocator(self: *Self) *Allocator {
+            return self.main_allocator;
+        }
+
+        pub fn deinit(self: *Self) void {}
+    };
+}
+
 pub fn main() !void {
-    //const allocator = std.heap.c_allocator;
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = &gpa.allocator;
+    var system = System().init();
+    const allocator = system.allocator();
 
     const glfw = try GLFW.init();
     defer glfw.deinit();
@@ -33,7 +81,8 @@ pub fn main() !void {
     while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
         glfwPollEvents();
     }
-    _ = gpa.detectLeaks();
+
+    system.deinit();
 }
 
 const GLFW = struct {
