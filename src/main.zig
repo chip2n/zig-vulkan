@@ -69,6 +69,7 @@ pub fn ReleaseSystem() type {
 
 pub fn main() !void {
     var system = System().init();
+    defer system.deinit();
     const allocator = system.allocator();
 
     const glfw = try GLFW.init();
@@ -80,8 +81,6 @@ pub fn main() !void {
     while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
         glfwPollEvents();
     }
-
-    system.deinit();
 }
 
 const GLFW = struct {
@@ -110,6 +109,7 @@ const GLFW = struct {
 };
 
 const Vulkan = struct {
+    allocator: *Allocator,
     instance: VkInstance,
     physical_device: VkPhysicalDevice,
     logical_device: VkDevice,
@@ -117,6 +117,9 @@ const Vulkan = struct {
     present_queue: VkQueue,
     surface: VkSurfaceKHR,
     swap_chain: VkSwapchainKHR,
+    swap_chain_images: []VkImage,
+    swap_chain_image_format: VkFormat,
+    swap_chain_extent: VkExtent2D,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     pub fn init(allocator: *Allocator, window: *GLFWwindow) !Vulkan {
@@ -195,8 +198,24 @@ const Vulkan = struct {
         );
 
         const swap_chain = try createSwapChain(allocator, physical_device, logical_device, window, surface, indices);
+        var image_count: u32 = 0;
+        try checkSuccess(
+            vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, null),
+            error.VulkanSwapChainImageRetrievalFailed,
+        );
+        var swap_chain_images = try allocator.alloc(VkImage, image_count);
+        try checkSuccess(
+            vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, swap_chain_images.ptr),
+            error.VulkanSwapChainImageRetrievalFailed,
+        );
+        // TODO reuse this
+        const swap_chain_support = try querySwapChainSupport(allocator, physical_device, surface);
+        defer swap_chain_support.deinit();
+        const swap_chain_surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats).format;
+        const swap_chain_extent = chooseSwapExtent(window, swap_chain_support.capabilities);
 
         return Vulkan{
+            .allocator = allocator,
             .instance = instance,
             .physical_device = physical_device,
             .logical_device = logical_device,
@@ -204,11 +223,15 @@ const Vulkan = struct {
             .present_queue = present_queue,
             .surface = surface,
             .swap_chain = swap_chain,
+            .swap_chain_images = swap_chain_images,
+            .swap_chain_image_format = swap_chain_surface_format,
+            .swap_chain_extent = swap_chain_extent,
             .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
+        self.allocator.free(self.swap_chain_images);
         vkDestroySwapchainKHR(self.logical_device, self.swap_chain, null);
         vkDestroyDevice(self.logical_device, null);
         if (self.debug_messenger) |messenger| {
