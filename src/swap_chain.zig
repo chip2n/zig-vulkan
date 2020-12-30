@@ -21,7 +21,23 @@ pub const SwapChain = struct {
         surface: VkSurfaceKHR,
         indices: QueueFamilyIndices,
     ) !SwapChain {
-        const swap_chain = try createSwapChain(allocator, physical_device, logical_device, window, surface, indices);
+        const swap_chain_support = try querySwapChainSupport(allocator, physical_device, surface);
+        defer swap_chain_support.deinit();
+
+        const surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats);
+        const present_mode = chooseSwapPresentMode(swap_chain_support.present_modes);
+        const extent = chooseSwapExtent(window, swap_chain_support.capabilities);
+        const capabilities = swap_chain_support.capabilities;
+
+        const swap_chain = try createSwapChain(
+            logical_device,
+            surface,
+            indices,
+            capabilities,
+            surface_format,
+            present_mode,
+            extent,
+        );
         var image_count: u32 = 0;
         try checkSuccess(
             vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, null),
@@ -33,8 +49,6 @@ pub const SwapChain = struct {
             error.VulkanSwapChainImageRetrievalFailed,
         );
         // TODO reuse this
-        const swap_chain_support = try querySwapChainSupport(allocator, physical_device, surface);
-        defer swap_chain_support.deinit();
         const swap_chain_surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats).format;
         const swap_chain_extent = chooseSwapExtent(window, swap_chain_support.capabilities);
 
@@ -169,22 +183,17 @@ pub fn chooseSwapExtent(window: *GLFWwindow, capabilities: VkSurfaceCapabilities
 }
 
 pub fn createSwapChain(
-    allocator: *Allocator,
-    physical_device: VkPhysicalDevice,
     logical_device: VkDevice,
-    window: *GLFWwindow,
     surface: VkSurfaceKHR,
     indices: QueueFamilyIndices,
+    capabilities: VkSurfaceCapabilitiesKHR,
+    surface_format: VkSurfaceFormatKHR,
+    present_mode: VkPresentModeKHR,
+    extent: VkExtent2D,
 ) !VkSwapchainKHR {
-    const swap_chain_support = try querySwapChainSupport(allocator, physical_device, surface);
-    defer swap_chain_support.deinit();
-    const surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats);
-    const present_mode = chooseSwapPresentMode(swap_chain_support.present_modes);
-    const extent = chooseSwapExtent(window, swap_chain_support.capabilities);
-
-    var image_count = swap_chain_support.capabilities.minImageCount + 1;
-    if (swap_chain_support.capabilities.maxImageCount > 0 and image_count > swap_chain_support.capabilities.maxImageCount) {
-        image_count = swap_chain_support.capabilities.maxImageCount;
+    var image_count = capabilities.minImageCount + 1;
+    if (capabilities.maxImageCount > 0 and image_count > capabilities.maxImageCount) {
+        image_count = capabilities.maxImageCount;
     }
 
     const queue_family_indices = [_]u32{ indices.graphics_family.?, indices.present_family.? };
@@ -205,7 +214,7 @@ pub fn createSwapChain(
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = null,
 
-        .preTransform = swap_chain_support.capabilities.currentTransform,
+        .preTransform = capabilities.currentTransform,
         .compositeAlpha = VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = present_mode,
         .clipped = VK_TRUE,
