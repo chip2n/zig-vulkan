@@ -6,6 +6,53 @@ usingnamespace @import("c.zig");
 usingnamespace @import("queue_family.zig");
 usingnamespace @import("utils.zig");
 
+pub const SwapChain = struct {
+    allocator: *Allocator,
+    swap_chain: VkSwapchainKHR,
+    swap_chain_images: []VkImage,
+    swap_chain_image_format: VkFormat,
+    swap_chain_extent: VkExtent2D,
+
+    pub fn init(
+        allocator: *Allocator,
+        physical_device: VkPhysicalDevice,
+        logical_device: VkDevice,
+        window: *GLFWwindow,
+        surface: VkSurfaceKHR,
+        indices: QueueFamilyIndices,
+    ) !SwapChain {
+        const swap_chain = try createSwapChain(allocator, physical_device, logical_device, window, surface, indices);
+        var image_count: u32 = 0;
+        try checkSuccess(
+            vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, null),
+            error.VulkanSwapChainImageRetrievalFailed,
+        );
+        var swap_chain_images = try allocator.alloc(VkImage, image_count);
+        try checkSuccess(
+            vkGetSwapchainImagesKHR(logical_device, swap_chain, &image_count, swap_chain_images.ptr),
+            error.VulkanSwapChainImageRetrievalFailed,
+        );
+        // TODO reuse this
+        const swap_chain_support = try querySwapChainSupport(allocator, physical_device, surface);
+        defer swap_chain_support.deinit();
+        const swap_chain_surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats).format;
+        const swap_chain_extent = chooseSwapExtent(window, swap_chain_support.capabilities);
+
+        return SwapChain{
+            .allocator = allocator,
+            .swap_chain = swap_chain,
+            .swap_chain_images = swap_chain_images,
+            .swap_chain_image_format = swap_chain_surface_format,
+            .swap_chain_extent = swap_chain_extent,
+        };
+    }
+
+    pub fn deinit(self: *const SwapChain, logical_device: VkDevice) void {
+        self.allocator.free(self.swap_chain_images);
+        vkDestroySwapchainKHR(logical_device, self.swap_chain, null);
+    }
+};
+
 const SwapChainSupportDetails = struct {
     allocator: *Allocator,
     capabilities: VkSurfaceCapabilitiesKHR,
