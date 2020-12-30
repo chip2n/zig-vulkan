@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const log = std.log;
-
 const dbg = @import("debug.zig");
 
 usingnamespace @import("c.zig");
@@ -172,13 +171,16 @@ const Vulkan = struct {
 
         const physical_device = try pickPhysicalDevice(allocator, instance, surface);
         const indices = try findQueueFamilies(allocator, physical_device, surface);
+        if (!indices.isComplete()) {
+            return error.VulkanSuitableQueuFamiliesNotFound;
+        }
 
         const logical_device = try createLogicalDevice(allocator, physical_device, indices);
 
         var graphics_queue: VkQueue = undefined;
         vkGetDeviceQueue(
             logical_device,
-            indices.graphics_family.?, // TODO
+            indices.graphics_family.?,
             0,
             &graphics_queue,
         );
@@ -186,7 +188,7 @@ const Vulkan = struct {
         var present_queue: VkQueue = undefined;
         vkGetDeviceQueue(
             logical_device,
-            indices.present_family.?, // TODO
+            indices.present_family.?,
             0,
             &present_queue,
         );
