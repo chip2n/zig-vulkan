@@ -12,6 +12,7 @@ pub const SwapChain = struct {
     swap_chain_images: []VkImage,
     swap_chain_image_format: VkFormat,
     swap_chain_extent: VkExtent2D,
+    swap_chain_image_views: []VkImageView,
 
     pub fn init(
         allocator: *Allocator,
@@ -52,17 +53,29 @@ pub const SwapChain = struct {
         const swap_chain_surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats).format;
         const swap_chain_extent = chooseSwapExtent(window, swap_chain_support.capabilities);
 
+        const image_views = try createImageViews(
+            allocator,
+            logical_device,
+            swap_chain_images,
+            swap_chain_surface_format,
+        );
+
         return SwapChain{
             .allocator = allocator,
             .swap_chain = swap_chain,
             .swap_chain_images = swap_chain_images,
             .swap_chain_image_format = swap_chain_surface_format,
             .swap_chain_extent = swap_chain_extent,
+            .swap_chain_image_views = image_views,
         };
     }
 
     pub fn deinit(self: *const SwapChain, logical_device: VkDevice) void {
         self.allocator.free(self.swap_chain_images);
+        for (self.swap_chain_image_views) |view| {
+            vkDestroyImageView(logical_device, view, null);
+        }
+        self.allocator.free(self.swap_chain_image_views);
         vkDestroySwapchainKHR(logical_device, self.swap_chain, null);
     }
 };
@@ -234,4 +247,43 @@ fn createSwapChain(
     );
 
     return swap_chain;
+}
+
+fn createImageViews(
+    allocator: *Allocator,
+    device: VkDevice,
+    images: []VkImage,
+    format: VkFormat,
+) ![]VkImageView {
+    var image_views = try allocator.alloc(VkImageView, images.len);
+    for (images) |image, i| {
+        const create_info = VkImageViewCreateInfo{
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .image = image,
+            .viewType = VkImageViewType.VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .components = VkComponentMapping{
+                .r = VkComponentSwizzle.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = VkComponentSwizzle.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = VkComponentSwizzle.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = VkComponentSwizzle.VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = VkImageSubresourceRange{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        try checkSuccess(
+            vkCreateImageView(device, &create_info, null, &image_views[i]),
+            error.VulkanSwapChainImageViewCreationFailed,
+        );
+    }
+
+    return image_views;
 }
