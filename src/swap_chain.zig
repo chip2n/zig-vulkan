@@ -136,7 +136,7 @@ pub fn querySwapChainSupport(allocator: *Allocator, device: VkPhysicalDevice, su
     );
 }
 
-pub fn chooseSwapSurfaceFormat(available_formats: []VkSurfaceFormatKHR) VkSurfaceFormatKHR {
+fn chooseSwapSurfaceFormat(available_formats: []VkSurfaceFormatKHR) VkSurfaceFormatKHR {
     // Try to find SRGB format
     for (available_formats) |format| {
         if (format.format == VkFormat.VK_FORMAT_B8G8R8A8_SRGB and format.colorSpace == VkColorSpaceKHR.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
@@ -148,7 +148,7 @@ pub fn chooseSwapSurfaceFormat(available_formats: []VkSurfaceFormatKHR) VkSurfac
     return available_formats[0];
 }
 
-pub fn chooseSwapPresentMode(available_present_modes: []VkPresentModeKHR) VkPresentModeKHR {
+fn chooseSwapPresentMode(available_present_modes: []VkPresentModeKHR) VkPresentModeKHR {
     for (available_present_modes) |present_mode| {
         if (present_mode == VkPresentModeKHR.VK_PRESENT_MODE_MAILBOX_KHR) {
             log.info("using vulkan present mode: VK_PRESENT_MODE_MAILBOX_KHR", .{});
@@ -160,7 +160,7 @@ pub fn chooseSwapPresentMode(available_present_modes: []VkPresentModeKHR) VkPres
     return VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR;
 }
 
-pub fn chooseSwapExtent(window: *GLFWwindow, capabilities: VkSurfaceCapabilitiesKHR) VkExtent2D {
+fn chooseSwapExtent(window: *GLFWwindow, capabilities: VkSurfaceCapabilitiesKHR) VkExtent2D {
     if (capabilities.currentExtent.width != UINT32_MAX) {
         return capabilities.currentExtent;
     } else {
@@ -182,7 +182,7 @@ pub fn chooseSwapExtent(window: *GLFWwindow, capabilities: VkSurfaceCapabilities
     }
 }
 
-pub fn createSwapChain(
+fn createSwapChain(
     logical_device: VkDevice,
     surface: VkSurfaceKHR,
     indices: QueueFamilyIndices,
