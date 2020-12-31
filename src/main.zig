@@ -1,6 +1,7 @@
 const std = @import("std");
+const mem = std.mem;
 const builtin = @import("builtin");
-const Allocator = std.mem.Allocator;
+const Allocator = mem.Allocator;
 const ArrayList = std.ArrayList;
 const log = std.log;
 const dbg = @import("debug.zig");
@@ -29,6 +30,7 @@ fn System() type {
     }
 }
 
+/// uses the general purpose allocator to catch memory leaks
 fn DebugSystem() type {
     return struct {
         const Self = @This();
@@ -51,6 +53,7 @@ fn DebugSystem() type {
     };
 }
 
+/// uses the C allocator for performance
 pub fn ReleaseSystem() type {
     return struct {
         const Self = @This();
@@ -119,6 +122,7 @@ const Vulkan = struct {
     present_queue: VkQueue,
     surface: VkSurfaceKHR,
     swap_chain: SwapChain,
+    pipeline_layout: VkPipelineLayout,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     pub fn init(allocator: *Allocator, window: *GLFWwindow) !Vulkan {
@@ -196,7 +200,16 @@ const Vulkan = struct {
             &present_queue,
         );
 
-        const swap_chain = try SwapChain.init(allocator, physical_device, logical_device, window, surface, indices);
+        const swap_chain = try SwapChain.init(
+            allocator,
+            physical_device,
+            logical_device,
+            window,
+            surface,
+            indices,
+        );
+
+        const pipeline_layout = try createGraphicsPipeline(logical_device, swap_chain.extent);
 
         return Vulkan{
             .allocator = allocator,
@@ -207,11 +220,13 @@ const Vulkan = struct {
             .present_queue = present_queue,
             .surface = surface,
             .swap_chain = swap_chain,
+            .pipeline_layout = pipeline_layout,
             .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
+        vkDestroyPipelineLayout(self.logical_device, self.pipeline_layout, null);
         self.swap_chain.deinit(self.logical_device);
         vkDestroyDevice(self.logical_device, null);
         if (self.debug_messenger) |messenger| {
@@ -225,7 +240,10 @@ const Vulkan = struct {
 /// caller must free returned memory
 fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
     var glfw_extension_count: u32 = 0;
-    const glfw_extensions = @ptrCast([*]const [*:0]const u8, glfwGetRequiredInstanceExtensions(&glfw_extension_count));
+    const glfw_extensions = @ptrCast(
+        [*]const [*:0]const u8,
+        glfwGetRequiredInstanceExtensions(&glfw_extension_count),
+    );
 
     var extensions = ArrayList([*:0]const u8).init(allocator);
     errdefer extensions.deinit();
@@ -239,7 +257,11 @@ fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
     return extensions.toOwnedSlice();
 }
 
-fn pickPhysicalDevice(allocator: *Allocator, instance: VkInstance, surface: VkSurfaceKHR) !VkPhysicalDevice {
+fn pickPhysicalDevice(
+    allocator: *Allocator,
+    instance: VkInstance,
+    surface: VkSurfaceKHR,
+) !VkPhysicalDevice {
     var device_count: u32 = 0;
     try checkSuccess(
         vkEnumeratePhysicalDevices(instance, &device_count, null),
@@ -307,7 +329,11 @@ fn checkDeviceExtensionSupport(allocator: *Allocator, device: VkPhysicalDevice) 
     return required_extensions.count() == 0;
 }
 
-fn createLogicalDevice(allocator: *Allocator, physical_device: VkPhysicalDevice, indices: QueueFamilyIndices) !VkDevice {
+fn createLogicalDevice(
+    allocator: *Allocator,
+    physical_device: VkPhysicalDevice,
+    indices: QueueFamilyIndices,
+) !VkDevice {
     const all_queue_families = [_]u32{ indices.graphics_family.?, indices.present_family.? };
     const unique_queue_families = if (indices.graphics_family.? == indices.present_family.?)
         all_queue_families[0..1]
@@ -421,4 +447,180 @@ fn createSurface(instance: VkInstance, window: *GLFWwindow) !VkSurfaceKHR {
         error.VulkanWindowSurfaceCreationFailed,
     );
     return surface;
+}
+
+fn createShaderModule(device: VkDevice, code: []align(@alignOf(u32)) const u8) !VkShaderModule {
+    const create_info = VkShaderModuleCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .codeSize = code.len,
+        .pCode = mem.bytesAsSlice(u32, code).ptr,
+    };
+
+    var shader_module: VkShaderModule = undefined;
+    try checkSuccess(
+        vkCreateShaderModule(device, &create_info, null, &shader_module),
+        error.VulkanShaderCreationFailed,
+    );
+
+    return shader_module;
+}
+
+fn createGraphicsPipeline(device: VkDevice, swap_chain_extent: VkExtent2D) !VkPipelineLayout {
+    const vert_code align(4) = @embedFile("../vert.spv").*;
+    const frag_code align(4) = @embedFile("../frag.spv").*;
+
+    const vert_module = try createShaderModule(device, &vert_code);
+    defer vkDestroyShaderModule(device, vert_module, null);
+
+    const frag_module = try createShaderModule(device, &frag_code);
+    defer vkDestroyShaderModule(device, frag_module, null);
+
+    const vert_stage_info = VkPipelineShaderStageCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .stage = VkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vert_module,
+        .pName = "main",
+        .pSpecializationInfo = null,
+    };
+
+    const frag_stage_info = VkPipelineShaderStageCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .stage = VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = frag_module,
+        .pName = "main",
+        .pSpecializationInfo = null,
+    };
+
+    const shader_stages = [_]VkPipelineShaderStageCreateInfo{ vert_stage_info, frag_stage_info };
+
+    const vertex_input_info = VkPipelineVertexInputStateCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .vertexBindingDescriptionCount = 0,
+        .pVertexBindingDescriptions = null,
+        .vertexAttributeDescriptionCount = 0,
+        .pVertexAttributeDescriptions = null,
+    };
+
+    const input_assembly_info = VkPipelineInputAssemblyStateCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .topology = VkPrimitiveTopology.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .primitiveRestartEnable = VK_FALSE,
+    };
+
+    const viewport = VkViewport{
+        .x = 0.0,
+        .y = 0.0,
+        .width = @intToFloat(f32, swap_chain_extent.width),
+        .height = @intToFloat(f32, swap_chain_extent.height),
+        .minDepth = 0.0,
+        .maxDepth = 1.0,
+    };
+
+    const scissor = VkRect2D{
+        .offset = VkOffset2D{ .x = 0, .y = 0 },
+        .extent = swap_chain_extent,
+    };
+
+    const viewport_state = VkPipelineViewportStateCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .viewportCount = 1,
+        .pViewports = &viewport,
+        .scissorCount = 1,
+        .pScissors = &scissor,
+    };
+
+    const rasterizer = VkPipelineRasterizationStateCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .depthClampEnable = VK_FALSE,
+        .rasterizerDiscardEnable = VK_FALSE,
+        .polygonMode = VkPolygonMode.VK_POLYGON_MODE_FILL,
+        .lineWidth = 1.0,
+        .cullMode = VK_CULL_MODE_BACK_BIT,
+        .frontFace = VkFrontFace.VK_FRONT_FACE_CLOCKWISE,
+        .depthBiasEnable = VK_FALSE,
+        .depthBiasConstantFactor = 0.0,
+        .depthBiasClamp = 0.0,
+        .depthBiasSlopeFactor = 0.0,
+    };
+
+    const multisampling = VkPipelineMultisampleStateCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .sampleShadingEnable = VK_FALSE,
+        .rasterizationSamples = VkSampleCountFlagBits.VK_SAMPLE_COUNT_1_BIT,
+        .minSampleShading = 1.0,
+        .pSampleMask = null,
+        .alphaToCoverageEnable = VK_FALSE,
+        .alphaToOneEnable = VK_FALSE,
+    };
+
+    const color_blend_attachment = VkPipelineColorBlendAttachmentState{
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+            VK_COLOR_COMPONENT_G_BIT |
+            VK_COLOR_COMPONENT_B_BIT |
+            VK_COLOR_COMPONENT_A_BIT,
+        .blendEnable = VK_TRUE,
+        .srcColorBlendFactor = VkBlendFactor.VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VkBlendFactor.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VkBlendOp.VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VkBlendFactor.VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VkBlendFactor.VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = VkBlendOp.VK_BLEND_OP_ADD,
+    };
+
+    const color_blending = VkPipelineColorBlendStateCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .logicOpEnable = VK_FALSE,
+        .logicOp = VkLogicOp.VK_LOGIC_OP_COPY,
+        .attachmentCount = 1,
+        .pAttachments = &color_blend_attachment,
+        .blendConstants = [_]f32{ 0.0, 0.0, 0.0, 0.0 },
+    };
+
+    const dynamic_states = [_]VkDynamicState{
+        VkDynamicState.VK_DYNAMIC_STATE_VIEWPORT,
+        VkDynamicState.VK_DYNAMIC_STATE_LINE_WIDTH,
+    };
+    const dynamic_state = VkPipelineDynamicStateCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .dynamicStateCount = 2,
+        .pDynamicStates = &dynamic_states,
+    };
+
+    var pipeline_layout: VkPipelineLayout = undefined;
+    const pipeline_layout_info = VkPipelineLayoutCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .setLayoutCount = 0,
+        .pSetLayouts = null,
+        .pushConstantRangeCount = 0,
+        .pPushConstantRanges = null,
+    };
+
+    try checkSuccess(
+        vkCreatePipelineLayout(device, &pipeline_layout_info, null, &pipeline_layout),
+        error.VulkanPipelineCreationFailed,
+    );
+
+    return pipeline_layout;
 }
