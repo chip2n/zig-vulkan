@@ -123,6 +123,7 @@ const Vulkan = struct {
     surface: VkSurfaceKHR,
     swap_chain: SwapChain,
     pipeline_layout: VkPipelineLayout,
+    render_pass: VkRenderPass,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     pub fn init(allocator: *Allocator, window: *GLFWwindow) !Vulkan {
@@ -210,6 +211,7 @@ const Vulkan = struct {
         );
 
         const pipeline_layout = try createGraphicsPipeline(logical_device, swap_chain.extent);
+        const render_pass = try createRenderPass(logical_device, swap_chain.image_format);
 
         return Vulkan{
             .allocator = allocator,
@@ -221,12 +223,14 @@ const Vulkan = struct {
             .surface = surface,
             .swap_chain = swap_chain,
             .pipeline_layout = pipeline_layout,
+            .render_pass = render_pass,
             .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
         vkDestroyPipelineLayout(self.logical_device, self.pipeline_layout, null);
+        vkDestroyRenderPass(self.logical_device, self.render_pass, null);
         self.swap_chain.deinit(self.logical_device);
         vkDestroyDevice(self.logical_device, null);
         if (self.debug_messenger) |messenger| {
@@ -623,4 +627,55 @@ fn createGraphicsPipeline(device: VkDevice, swap_chain_extent: VkExtent2D) !VkPi
     );
 
     return pipeline_layout;
+}
+
+fn createRenderPass(device: VkDevice, swap_chain_image_format: VkFormat,) !VkRenderPass {
+    const color_attachment = VkAttachmentDescription{
+        .flags = 0,
+        .format = swap_chain_image_format,
+        .samples = VkSampleCountFlagBits.VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VkAttachmentLoadOp.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VkAttachmentStoreOp.VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VkAttachmentLoadOp.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VkAttachmentStoreOp.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VkImageLayout.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    };
+
+    const color_attachment_ref = VkAttachmentReference{
+        .attachment = 0,
+        .layout = VkImageLayout.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    const subpass = VkSubpassDescription{
+        .flags = 0,
+        .pipelineBindPoint = VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &color_attachment_ref,
+        .inputAttachmentCount = 0,
+        .pInputAttachments = null,
+        .pResolveAttachments = null,
+        .pDepthStencilAttachment = null,
+        .preserveAttachmentCount = 0,
+        .pPreserveAttachments = null,
+    };
+
+    var render_pass: VkRenderPass = undefined;
+    const render_pass_info = VkRenderPassCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .attachmentCount = 1,
+        .pAttachments = &color_attachment,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 0,
+        .pDependencies = null,
+    };
+    try checkSuccess(
+        vkCreateRenderPass(device, &render_pass_info, null, &render_pass),
+        error.VulkanRenderPassCreationFailed,
+    );
+
+    return render_pass;
 }
