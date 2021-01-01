@@ -15,6 +15,8 @@ pub const log_level: std.log.Level = .warn;
 
 const WIDTH = 800;
 const HEIGHT = 600;
+const MAX_FRAMES_IN_FLIGHT = 2;
+const MAX_UINT64 = @as(c_ulong, 18446744073709551615); // Couldn't use UINT64_MAX for some reason
 
 const enable_validation_layers = std.debug.runtime_safety;
 
@@ -83,28 +85,46 @@ pub fn main() !void {
     var vulkan = try Vulkan.init(allocator, glfw.window);
     defer vulkan.deinit();
 
+    // TODO put in Vulkan struct?
+    var current_frame: usize = 0;
     while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
         glfwPollEvents();
-        try drawFrame(&vulkan);
+        try drawFrame(&vulkan, current_frame);
+        current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
+
+    try checkSuccess(
+        vkDeviceWaitIdle(vulkan.logical_device),
+        error.VulkanDeviceWaitIdleFailure,
+    );
 }
 
-fn drawFrame(vulkan: *Vulkan) !void {
+fn drawFrame(vulkan: *Vulkan, current_frame: usize) !void {
+    try checkSuccess(
+        vkWaitForFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame], VK_TRUE, MAX_UINT64),
+        error.VulkanWaitForFencesFailure,
+    );
+
+    try checkSuccess(
+        vkResetFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame]),
+        error.VulkanResetFencesFailure,
+    );
+
     var image_index: u32 = 0;
     try checkSuccess(
         vkAcquireNextImageKHR(
             vulkan.logical_device,
             vulkan.swap_chain.swap_chain,
-            @as(c_ulong, 18446744073709551615), // UINT64_MAX
-            vulkan.image_available_semaphore,
+            MAX_UINT64,
+            vulkan.sync.image_available_semaphores[current_frame],
             null,
             &image_index,
         ),
         error.VulkanAcquireNextFrameFailure,
     );
 
-    const wait_semaphores = [_]VkSemaphore{vulkan.image_available_semaphore};
-    const signal_semaphores = [_]VkSemaphore{vulkan.render_finished_semaphore};
+    const wait_semaphores = [_]VkSemaphore{vulkan.sync.image_available_semaphores[current_frame]};
+    const signal_semaphores = [_]VkSemaphore{vulkan.sync.render_finished_semaphores[current_frame]};
     const wait_stages = [_]VkPipelineStageFlags{VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     const submit_info = VkSubmitInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -119,7 +139,7 @@ fn drawFrame(vulkan: *Vulkan) !void {
     };
 
     try checkSuccess(
-        vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, null),
+        vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, vulkan.sync.in_flight_fences[current_frame]),
         error.VulkanQueueSubmitFailure,
     );
 
@@ -180,8 +200,7 @@ const Vulkan = struct {
     swap_chain_framebuffers: []VkFramebuffer,
     command_pool: VkCommandPool,
     command_buffers: []VkCommandBuffer,
-    image_available_semaphore: VkSemaphore,
-    render_finished_semaphore: VkSemaphore,
+    sync: VulkanSynchronization,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     // TODO: use errdefer to clean up stuff in case of errors
@@ -286,8 +305,8 @@ const Vulkan = struct {
             pipeline.pipeline,
         );
 
-        const image_available_semaphore = try createSemaphore(logical_device);
-        const render_finished_semaphore = try createSemaphore(logical_device);
+        var sync = try VulkanSynchronization.init(allocator, logical_device);
+        errdefer sync.deinit();
 
         return Vulkan{
             .allocator = allocator,
@@ -303,15 +322,16 @@ const Vulkan = struct {
             .swap_chain_framebuffers = swap_chain_framebuffers,
             .command_pool = command_pool,
             .command_buffers = command_buffers,
-            .image_available_semaphore = image_available_semaphore,
-            .render_finished_semaphore = render_finished_semaphore,
+            .sync = sync,
             .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
-        vkDestroySemaphore(self.logical_device, self.render_finished_semaphore, null);
-        vkDestroySemaphore(self.logical_device, self.image_available_semaphore, null);
+        self.sync.deinit(self.logical_device);
+
+        self.allocator.free(self.command_buffers);
+
         vkDestroyCommandPool(self.logical_device, self.command_pool, null);
         for (self.swap_chain_framebuffers) |framebuffer| {
             vkDestroyFramebuffer(self.logical_device, framebuffer, null);
@@ -937,6 +957,71 @@ fn createCommandBuffers(
     return buffers;
 }
 
+const VulkanSynchronization = struct {
+    const Self = @This();
+
+    allocator: *Allocator,
+    image_available_semaphores: []VkSemaphore,
+    render_finished_semaphores: []VkSemaphore,
+    in_flight_fences: []VkFence,
+
+    fn init(allocator: *Allocator, device: VkDevice) !Self {
+        var image_available_semaphores = try allocator.alloc(VkSemaphore, MAX_FRAMES_IN_FLIGHT);
+        errdefer allocator.free(image_available_semaphores);
+
+        var render_finished_semaphores = try allocator.alloc(VkSemaphore, MAX_FRAMES_IN_FLIGHT);
+        errdefer allocator.free(render_finished_semaphores);
+
+        var in_flight_fences = try allocator.alloc(VkFence, MAX_FRAMES_IN_FLIGHT);
+        errdefer allocator.free(in_flight_fences);
+
+        var i: usize = 0;
+        while (i < MAX_FRAMES_IN_FLIGHT) : (i += 1) {
+            const semaphore = try createSemaphore(device);
+            errdefer vkDestroySemaphore(device, semaphore);
+            image_available_semaphores[i] = semaphore;
+        }
+
+        i = 0;
+        while (i < MAX_FRAMES_IN_FLIGHT) : (i += 1) {
+            const semaphore = try createSemaphore(device);
+            errdefer vkDestroySemaphore(device, semaphore);
+            render_finished_semaphores[i] = semaphore;
+        }
+
+        i = 0;
+        while (i < MAX_FRAMES_IN_FLIGHT) : (i += 1) {
+            const fence = try createFence(device);
+            errdefer vkDestroyFence(device, fence, null);
+            in_flight_fences[i] = fence;
+        }
+
+        return VulkanSynchronization{
+            .allocator = allocator,
+            .image_available_semaphores = image_available_semaphores,
+            .render_finished_semaphores = render_finished_semaphores,
+            .in_flight_fences = in_flight_fences,
+        };
+    }
+
+    fn deinit(self: Self, device: VkDevice) void {
+        for (self.render_finished_semaphores) |semaphore| {
+            vkDestroySemaphore(device, semaphore, null);
+        }
+        self.allocator.free(self.render_finished_semaphores);
+
+        for (self.image_available_semaphores) |semaphore| {
+            vkDestroySemaphore(device, semaphore, null);
+        }
+        self.allocator.free(self.image_available_semaphores);
+
+        for (self.in_flight_fences) |fence| {
+            vkDestroyFence(device, fence, null);
+        }
+        self.allocator.free(self.in_flight_fences);
+    }
+};
+
 fn createSemaphore(device: VkDevice) !VkSemaphore {
     var semaphore: VkSemaphore = undefined;
     const semaphore_info = VkSemaphoreCreateInfo{
@@ -950,4 +1035,20 @@ fn createSemaphore(device: VkDevice) !VkSemaphore {
     );
 
     return semaphore;
+}
+
+fn createFence(device: VkDevice) !VkFence {
+    var fence: VkFence = undefined;
+    const info = VkFenceCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = null,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+
+    try checkSuccess(
+        vkCreateFence(device, &info, null, &fence),
+        error.VulkanFenceCreationFailed,
+    );
+
+    return fence;
 }
