@@ -124,8 +124,10 @@ const Vulkan = struct {
     swap_chain: SwapChain,
     pipeline: Pipeline,
     render_pass: VkRenderPass,
-    command_pool: VkCommandPool,
     swap_chain_framebuffers: []VkFramebuffer,
+    command_pool: VkCommandPool,
+    image_available_semaphore: VkSemaphore,
+    render_finished_semaphore: VkSemaphore,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     // TODO: use errdefer to clean up stuff in case of errors
@@ -220,6 +222,9 @@ const Vulkan = struct {
 
         const command_pool = try createCommandPool(logical_device, indices);
 
+        const image_available_semaphore = try createSemaphore(logical_device);
+        const render_finished_semaphore = try createSemaphore(logical_device);
+
         return Vulkan{
             .allocator = allocator,
             .instance = instance,
@@ -233,11 +238,15 @@ const Vulkan = struct {
             .render_pass = render_pass,
             .swap_chain_framebuffers = swap_chain_framebuffers,
             .command_pool = command_pool,
+            .image_available_semaphore = image_available_semaphore,
+            .render_finished_semaphore = render_finished_semaphore,
             .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
+        vkDestroySemaphore(self.logical_device, self.render_finished_semaphore, null);
+        vkDestroySemaphore(self.logical_device, self.image_available_semaphore, null);
         vkDestroyCommandPool(self.logical_device, self.command_pool, null);
         for (self.swap_chain_framebuffers) |framebuffer| {
             vkDestroyFramebuffer(self.logical_device, framebuffer, null);
@@ -783,4 +792,80 @@ fn createCommandPool(device: VkDevice, indices: QueueFamilyIndices) !VkCommandPo
     );
 
     return command_pool;
+}
+
+fn createCommandBuffers(
+    allocator: *Allocator,
+    command_pool: VkCommandPool,
+    frame_buffers: []VkFrameBuffer,
+) ![]VkCommandBuffer {
+    var buffers = allocator.alloc(VkCommandBuffer, frame_buffers.len);
+    errdefer allocator.free(buffers);
+
+    const alloc_info = VkCommandBufferAllocateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .commandPool = command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = @intCast(u32, buffers.len),
+    };
+
+    try checkSuccess(
+        vkAllocateCommandBuffers(device, &alloc_info, &buffers),
+        error.VulkanCommanbBufferAllocationFailure,
+    );
+
+    for (buffers) |buffer, i| {
+        const begin_info = VkCommandBufferBeginInfo{
+            .sType = VkStructureTyp.VK_STRUCTURE_TYPE_COMMMAND_BUFFER_BEGIN_INFO,
+            .pNext = null,
+            .flags = 0,
+            .pInheritenceInfo = null,
+        };
+        try checkSuccess(
+            vkBeginCommandBuffer(buffer, &begin_info),
+            error.VulkanBeginCommandBufferFailure,
+        );
+
+        const clear_color = []VkClearValue{ 0.0, 0.0, 0.0, 0.0 };
+        const render_pass_info = VkRenderPassBeginInfo{
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass = render_pass,
+            .framebuffer = framebuffers[i],
+            .renderArea = VkRect2D{
+                .offset = VkOffset2D{ .x = 0, .y = 0 },
+                .extent = swap_chain_extent,
+            },
+            .clearValueCount = 1,
+            .pClearValues = &clear_color,
+        };
+
+        vkCmdBeginRenderPass(buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+        vkCmdDraw(buffers, 3, 1, 0, 0);
+        vkCmdEndRenderPass(buffer);
+
+        try checkSuccess(
+            vkEndCommandBuffer(buffer),
+            error.VulkanCommandBufferEndFailure,
+        );
+    }
+
+    return buffers;
+}
+
+fn createSemaphore(device: VkDevice) !VkSemaphore {
+    var semaphore: VkSemaphore = undefined;
+    const semaphore_info = VkSemaphoreCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+    };
+    try checkSuccess(
+        vkCreateSemaphore(device, &semaphore_info, null, &semaphore),
+        error.VulkanSemaphoreCreationFailure,
+    );
+
+    return semaphore;
 }
