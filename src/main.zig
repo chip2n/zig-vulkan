@@ -85,7 +85,60 @@ pub fn main() !void {
 
     while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
         glfwPollEvents();
+        try drawFrame(&vulkan);
     }
+}
+
+fn drawFrame(vulkan: *Vulkan) !void {
+    var image_index: u32 = 0;
+    try checkSuccess(
+        vkAcquireNextImageKHR(
+            vulkan.logical_device,
+            vulkan.swap_chain.swap_chain,
+            @as(c_ulong, 18446744073709551615), // UINT64_MAX
+            vulkan.image_available_semaphore,
+            null,
+            &image_index,
+        ),
+        error.VulkanAcquireNextFrameFailure,
+    );
+
+    const wait_semaphores = [_]VkSemaphore{vulkan.image_available_semaphore};
+    const signal_semaphores = [_]VkSemaphore{vulkan.render_finished_semaphore};
+    const wait_stages = [_]VkPipelineStageFlags{VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    const submit_info = VkSubmitInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = null,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &wait_semaphores,
+        .pWaitDstStageMask = &wait_stages,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &vulkan.command_buffers[image_index],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &signal_semaphores,
+    };
+
+    try checkSuccess(
+        vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, null),
+        error.VulkanQueueSubmitFailure,
+    );
+
+    const swap_chains = [_]VkSwapchainKHR{vulkan.swap_chain.swap_chain};
+    const present_info = VkPresentInfoKHR{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .pNext = null,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &signal_semaphores,
+        .swapchainCount = 1,
+        .pSwapchains = &swap_chains,
+        .pImageIndices = &image_index,
+        .pResults = null,
+    };
+
+    try checkSuccess(
+        vkQueuePresentKHR(vulkan.present_queue, &present_info),
+        error.VulkanQueuePresentFailure,
+    );
 }
 
 const GLFW = struct {
@@ -126,6 +179,7 @@ const Vulkan = struct {
     render_pass: VkRenderPass,
     swap_chain_framebuffers: []VkFramebuffer,
     command_pool: VkCommandPool,
+    command_buffers: []VkCommandBuffer,
     image_available_semaphore: VkSemaphore,
     render_finished_semaphore: VkSemaphore,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
@@ -215,12 +269,22 @@ const Vulkan = struct {
             indices,
         );
 
-        const render_pass = try createRenderPass(logical_device, swap_chain.image_format);
+        const render_pass = try createRenderPass(logical_device, swap_chain.image_format, swap_chain.extent);
         const pipeline = try Pipeline.init(logical_device, render_pass, swap_chain.extent);
 
         const swap_chain_framebuffers = try createFramebuffers(allocator, logical_device, render_pass, swap_chain);
 
         const command_pool = try createCommandPool(logical_device, indices);
+
+        const command_buffers = try createCommandBuffers(
+            allocator,
+            logical_device,
+            render_pass,
+            command_pool,
+            swap_chain_framebuffers,
+            swap_chain.extent,
+            pipeline.pipeline,
+        );
 
         const image_available_semaphore = try createSemaphore(logical_device);
         const render_finished_semaphore = try createSemaphore(logical_device);
@@ -238,6 +302,7 @@ const Vulkan = struct {
             .render_pass = render_pass,
             .swap_chain_framebuffers = swap_chain_framebuffers,
             .command_pool = command_pool,
+            .command_buffers = command_buffers,
             .image_available_semaphore = image_available_semaphore,
             .render_finished_semaphore = render_finished_semaphore,
             .debug_messenger = debug_messenger,
@@ -694,6 +759,7 @@ const Pipeline = struct {
 fn createRenderPass(
     device: VkDevice,
     swap_chain_image_format: VkFormat,
+    swap_chain_extent: VkExtent2D,
 ) !VkRenderPass {
     const color_attachment = VkAttachmentDescription{
         .flags = 0,
@@ -725,6 +791,16 @@ fn createRenderPass(
         .pPreserveAttachments = null,
     };
 
+    const dependency = VkSubpassDependency{
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = 0,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .dependencyFlags = 0,
+    };
+
     var render_pass: VkRenderPass = undefined;
     const render_pass_info = VkRenderPassCreateInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -734,8 +810,8 @@ fn createRenderPass(
         .pAttachments = &color_attachment,
         .subpassCount = 1,
         .pSubpasses = &subpass,
-        .dependencyCount = 0,
-        .pDependencies = null,
+        .dependencyCount = 1,
+        .pDependencies = &dependency,
     };
     try checkSuccess(
         vkCreateRenderPass(device, &render_pass_info, null, &render_pass),
@@ -796,41 +872,47 @@ fn createCommandPool(device: VkDevice, indices: QueueFamilyIndices) !VkCommandPo
 
 fn createCommandBuffers(
     allocator: *Allocator,
+    device: VkDevice,
+    render_pass: VkRenderPass,
     command_pool: VkCommandPool,
-    frame_buffers: []VkFrameBuffer,
+    framebuffers: []VkFramebuffer,
+    swap_chain_extent: VkExtent2D,
+    graphics_pipeline: VkPipeline,
 ) ![]VkCommandBuffer {
-    var buffers = allocator.alloc(VkCommandBuffer, frame_buffers.len);
+    var buffers = try allocator.alloc(VkCommandBuffer, framebuffers.len);
     errdefer allocator.free(buffers);
 
     const alloc_info = VkCommandBufferAllocateInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = null,
-        .flags = 0,
         .commandPool = command_pool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .level = VkCommandBufferLevel.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = @intCast(u32, buffers.len),
     };
 
     try checkSuccess(
-        vkAllocateCommandBuffers(device, &alloc_info, &buffers),
+        vkAllocateCommandBuffers(device, &alloc_info, buffers.ptr),
         error.VulkanCommanbBufferAllocationFailure,
     );
 
     for (buffers) |buffer, i| {
         const begin_info = VkCommandBufferBeginInfo{
-            .sType = VkStructureTyp.VK_STRUCTURE_TYPE_COMMMAND_BUFFER_BEGIN_INFO,
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .pNext = null,
             .flags = 0,
-            .pInheritenceInfo = null,
+            .pInheritanceInfo = null,
         };
         try checkSuccess(
             vkBeginCommandBuffer(buffer, &begin_info),
             error.VulkanBeginCommandBufferFailure,
         );
 
-        const clear_color = []VkClearValue{ 0.0, 0.0, 0.0, 0.0 };
+        const clear_color = [_]VkClearValue{VkClearValue{
+            .color = VkClearColorValue{ .float32 = [_]f32{ 0.0, 0.0, 0.0, 1.0 } },
+        }};
         const render_pass_info = VkRenderPassBeginInfo{
             .sType = VkStructureType.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .pNext = null,
             .renderPass = render_pass,
             .framebuffer = framebuffers[i],
             .renderArea = VkRect2D{
@@ -841,9 +923,9 @@ fn createCommandBuffers(
             .pClearValues = &clear_color,
         };
 
-        vkCmdBeginRenderPass(buffer, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdBindPipeline(buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        vkCmdDraw(buffers, 3, 1, 0, 0);
+        vkCmdBeginRenderPass(buffer, &render_pass_info, VkSubpassContents.VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBindPipeline(buffer, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+        vkCmdDraw(buffer, 3, 1, 0, 0);
         vkCmdEndRenderPass(buffer);
 
         try checkSuccess(

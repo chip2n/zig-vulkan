@@ -26,7 +26,7 @@ pub fn findQueueFamilies(allocator: *Allocator, device: VkPhysicalDevice, surfac
     // OPTIMIZE: use queue that supports all features if one is available
     var i: u32 = 0;
     for (queue_families) |family| {
-        if (family.queueFlags & @intCast(u32, VK_QUEUE_GRAPHICS_BIT) == 0) {
+        if (family.queueFlags & @intCast(u32, VK_QUEUE_GRAPHICS_BIT) != 0) {
             indices.graphics_family = @intCast(u32, i);
         }
 
