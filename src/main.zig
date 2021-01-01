@@ -124,6 +124,7 @@ const Vulkan = struct {
     swap_chain: SwapChain,
     pipeline: Pipeline,
     render_pass: VkRenderPass,
+    command_pool: VkCommandPool,
     swap_chain_framebuffers: []VkFramebuffer,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
@@ -217,6 +218,8 @@ const Vulkan = struct {
 
         const swap_chain_framebuffers = try createFramebuffers(allocator, logical_device, render_pass, swap_chain);
 
+        const command_pool = try createCommandPool(logical_device, indices);
+
         return Vulkan{
             .allocator = allocator,
             .instance = instance,
@@ -229,11 +232,13 @@ const Vulkan = struct {
             .pipeline = pipeline,
             .render_pass = render_pass,
             .swap_chain_framebuffers = swap_chain_framebuffers,
+            .command_pool = command_pool,
             .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
+        vkDestroyCommandPool(self.logical_device, self.command_pool, null);
         for (self.swap_chain_framebuffers) |framebuffer| {
             vkDestroyFramebuffer(self.logical_device, framebuffer, null);
         }
@@ -761,4 +766,21 @@ fn createFramebuffers(
     }
 
     return framebuffers;
+}
+
+fn createCommandPool(device: VkDevice, indices: QueueFamilyIndices) !VkCommandPool {
+    const pool_info = VkCommandPoolCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .queueFamilyIndex = indices.graphics_family.?,
+    };
+
+    var command_pool: VkCommandPool = undefined;
+    try checkSuccess(
+        vkCreateCommandPool(device, &pool_info, null, &command_pool),
+        error.VulkanCommandPoolCreationFailure,
+    );
+
+    return command_pool;
 }
