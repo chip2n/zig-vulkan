@@ -124,6 +124,7 @@ const Vulkan = struct {
     swap_chain: SwapChain,
     pipeline: Pipeline,
     render_pass: VkRenderPass,
+    swap_chain_framebuffers: []VkFramebuffer,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     // TODO: use errdefer to clean up stuff in case of errors
@@ -214,6 +215,8 @@ const Vulkan = struct {
         const render_pass = try createRenderPass(logical_device, swap_chain.image_format);
         const pipeline = try Pipeline.init(logical_device, render_pass, swap_chain.extent);
 
+        const swap_chain_framebuffers = try createFramebuffers(allocator, logical_device, render_pass, swap_chain);
+
         return Vulkan{
             .allocator = allocator,
             .instance = instance,
@@ -225,11 +228,16 @@ const Vulkan = struct {
             .swap_chain = swap_chain,
             .pipeline = pipeline,
             .render_pass = render_pass,
+            .swap_chain_framebuffers = swap_chain_framebuffers,
             .debug_messenger = debug_messenger,
         };
     }
 
     pub fn deinit(self: *const Vulkan) void {
+        for (self.swap_chain_framebuffers) |framebuffer| {
+            vkDestroyFramebuffer(self.logical_device, framebuffer, null);
+        }
+        self.allocator.free(self.swap_chain_framebuffers);
         self.pipeline.deinit(self.logical_device);
         vkDestroyRenderPass(self.logical_device, self.render_pass, null);
         self.swap_chain.deinit(self.logical_device);
@@ -721,4 +729,36 @@ fn createRenderPass(
     );
 
     return render_pass;
+}
+
+fn createFramebuffers(
+    allocator: *Allocator,
+    device: VkDevice,
+    render_pass: VkRenderPass,
+    swap_chain: SwapChain,
+) ![]VkFramebuffer {
+    var framebuffers = try allocator.alloc(VkFramebuffer, swap_chain.image_views.len);
+    errdefer allocator.free(framebuffers);
+
+    for (swap_chain.image_views) |image_view, i| {
+        var attachments = [_]VkImageView{image_view};
+        const frame_buffer_info = VkFramebufferCreateInfo{
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .renderPass = render_pass,
+            .attachmentCount = 1,
+            .pAttachments = &attachments,
+            .width = swap_chain.extent.width,
+            .height = swap_chain.extent.height,
+            .layers = 1,
+        };
+
+        try checkSuccess(
+            vkCreateFramebuffer(device, &frame_buffer_info, null, &framebuffers[i]),
+            error.VulkanFramebufferCreationFailed,
+        );
+    }
+
+    return framebuffers;
 }
