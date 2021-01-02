@@ -10,11 +10,10 @@ usingnamespace @import("c.zig");
 usingnamespace @import("queue_family.zig");
 usingnamespace @import("swap_chain.zig");
 usingnamespace @import("utils.zig");
+usingnamespace @import("window.zig");
 
 pub const log_level: std.log.Level = .warn;
 
-const WIDTH = 800;
-const HEIGHT = 600;
 const MAX_FRAMES_IN_FLIGHT = 2;
 const MAX_UINT64 = @as(c_ulong, 18446744073709551615); // Couldn't use UINT64_MAX for some reason
 
@@ -32,11 +31,21 @@ pub fn main() !void {
 
     var context = try RenderContext.init(allocator);
     defer context.deinit();
-    context.glfw.register_resize_callback(&context);
+
+    var callback = ResizeCallback{
+        .data = &context,
+        .cb = framebufferResizeCallback
+    };
+    context.glfw.registerResizeCallback(&callback);
 
     while (!context.shouldClose()) {
         try context.renderFrame();
     }
+}
+
+fn framebufferResizeCallback(data: *c_void) void {
+    var context = @ptrCast(*RenderContext, @alignCast(@alignOf(*RenderContext), data));
+    context.framebuffer_resized = true;
 }
 
 fn System() type {
@@ -215,41 +224,6 @@ const RenderContext = struct {
         }
     }
 };
-
-const GLFW = struct {
-    window: *GLFWwindow,
-
-    pub fn init() !GLFW {
-        const init_result = glfwInit();
-        if (init_result == GLFW_FALSE) {
-            return error.GLFWInitializationFailed;
-        }
-
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-        const window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan window", null, null);
-        if (window == null) {
-            return error.GLFWInitializationFailed;
-        }
-
-        return GLFW{ .window = window.? };
-    }
-
-    pub fn register_resize_callback(self: *@This(), context: *RenderContext) void {
-        glfwSetWindowUserPointer(self.window, context);
-        _ = glfwSetFramebufferSizeCallback(self.window, framebufferResizeCallback);
-    }
-
-    pub fn deinit(self: *const GLFW) void {
-        glfwDestroyWindow(self.window);
-        glfwTerminate();
-    }
-};
-
-fn framebufferResizeCallback(window: ?*GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
-    var context = @ptrCast(*RenderContext, @alignCast(@alignOf(*RenderContext), glfwGetWindowUserPointer(window)));
-    context.framebuffer_resized = true;
-}
 
 const Vulkan = struct {
     allocator: *Allocator,

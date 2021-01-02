@@ -5,6 +5,7 @@ const log = std.log;
 usingnamespace @import("c.zig");
 usingnamespace @import("queue_family.zig");
 usingnamespace @import("utils.zig");
+usingnamespace @import("window.zig");
 
 pub const SwapChain = struct {
     allocator: *Allocator,
@@ -174,11 +175,9 @@ fn chooseSwapExtent(window: *GLFWwindow, capabilities: VkSurfaceCapabilitiesKHR)
     if (capabilities.currentExtent.width != UINT32_MAX) {
         return capabilities.currentExtent;
     } else {
-        var width: c_int = 0;
-        var height: c_int = 0;
-        glfwGetFramebufferSize(window, &width, &height);
+        const size = getFramebufferSize(window);
 
-        var actual_extent = VkExtent2D{ .width = @intCast(u32, width), .height = @intCast(u32, height) };
+        var actual_extent = VkExtent2D{ .width = size.width, .height = size.height };
         actual_extent.width = std.math.max(
             capabilities.minImageExtent.width,
             std.math.min(capabilities.maxImageExtent.width, actual_extent.width),

@@ -2,6 +2,8 @@ const std = @import("std");
 
 usingnamespace @import("c.zig");
 
+pub const Size = struct { width: u32, height: u32 };
+
 pub fn checkSuccess(result: VkResult, comptime E: anytype) @TypeOf(E)!void {
     switch (result) {
         VkResult.VK_SUCCESS => {},
