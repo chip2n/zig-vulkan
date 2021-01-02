@@ -77,26 +77,53 @@ pub fn ReleaseSystem() type {
     };
 }
 
+const RenderContext = struct {
+    glfw: GLFW,
+    vulkan: Vulkan,
+    current_frame: usize,
+    frame_buffer_resized: bool,
+
+    fn init(allocator: *Allocator) !RenderContext {
+        const glfw = try GLFW.init();
+        errdefer glfw.deinit();
+
+        var vulkan = try Vulkan.init(allocator, glfw.window);
+        errdefer vulkan.deinit();
+
+        return RenderContext{
+            .vulkan = vulkan,
+            .glfw = glfw,
+            .current_frame = 0,
+            .frame_buffer_resized = false,
+        };
+    }
+
+    fn deinit(self: @This()) void {
+        self.vulkan.deinit();
+        self.glfw.deinit();
+    }
+
+    fn render_frame(self: *@This()) !void {
+        glfwPollEvents();
+        try drawFrame(&self.vulkan, self.glfw.window, self.current_frame);
+        self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+
+    fn should_close(self: @This()) bool {
+        return glfwWindowShouldClose(self.glfw.window) != GLFW_FALSE;
+    }
+};
+
 pub fn main() !void {
     var system = System().init();
     defer system.deinit();
+
     const allocator = system.allocator();
 
-    const glfw = try GLFW.init();
-    defer glfw.deinit();
-
-    var vulkan = try Vulkan.init(allocator, glfw.window);
-    defer vulkan.deinit();
-
-    // TODO put in Vulkan struct?
-    var current_frame: usize = 0;
-    while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
-        glfwPollEvents();
-        try drawFrame(&vulkan, glfw.window, current_frame);
-        current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+    var context = try RenderContext.init(allocator);
+    while (!context.should_close()) {
+        try context.render_frame();
     }
-
-    try checkSuccess(vkDeviceWaitIdle(vulkan.logical_device), error.VulkanDeviceWaitIdleFailure);
 }
 
 fn drawFrame(vulkan: *Vulkan, window: *GLFWwindow, current_frame: usize) !void {
@@ -359,6 +386,11 @@ const Vulkan = struct {
     }
 
     pub fn deinit(self: *const Vulkan) void {
+        const result = vkDeviceWaitIdle(vulkan.logical_device);
+        if (result != VK_SUCCESS) {
+            log.warn("Unable to wait for Vulkan device to be idle before cleanup");
+        }
+
         self.cleanUpSwapChain();
 
         self.sync.deinit(self.logical_device);
