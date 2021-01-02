@@ -19,7 +19,7 @@ pub const SwapChain = struct {
         allocator: *Allocator,
         physical_device: VkPhysicalDevice,
         logical_device: VkDevice,
-        window: *GLFWwindow,
+        window: *const Window,
         surface: VkSurfaceKHR,
         indices: QueueFamilyIndices,
     ) !SwapChain {
@@ -171,11 +171,11 @@ fn chooseSwapPresentMode(available_present_modes: []VkPresentModeKHR) VkPresentM
     return VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR;
 }
 
-fn chooseSwapExtent(window: *GLFWwindow, capabilities: VkSurfaceCapabilitiesKHR) VkExtent2D {
+fn chooseSwapExtent(window: *const Window, capabilities: VkSurfaceCapabilitiesKHR) VkExtent2D {
     if (capabilities.currentExtent.width != UINT32_MAX) {
         return capabilities.currentExtent;
     } else {
-        const size = getFramebufferSize(window);
+        const size = window.getFramebufferSize();
 
         var actual_extent = VkExtent2D{ .width = size.width, .height = size.height };
         actual_extent.width = std.math.max(

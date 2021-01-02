@@ -36,7 +36,7 @@ pub fn main() !void {
         .data = &context,
         .cb = framebufferResizeCallback
     };
-    context.glfw.registerResizeCallback(&callback);
+    context.window.registerResizeCallback(&callback);
 
     while (!context.shouldClose()) {
         try context.renderFrame();
@@ -99,7 +99,7 @@ pub fn ReleaseSystem() type {
 }
 
 const RenderContext = struct {
-    glfw: GLFW,
+    window: Window,
     vulkan: Vulkan,
     current_frame: usize,
     framebuffer_resized: bool,
@@ -107,15 +107,15 @@ const RenderContext = struct {
     const Self = @This();
 
     fn init(allocator: *Allocator) !RenderContext {
-        const glfw = try GLFW.init();
-        errdefer glfw.deinit();
+        const window = try Window.init();
+        errdefer window.deinit();
 
-        var vulkan = try Vulkan.init(allocator, glfw.window);
+        var vulkan = try Vulkan.init(allocator, &window);
         errdefer vulkan.deinit();
 
         return RenderContext{
             .vulkan = vulkan,
-            .glfw = glfw,
+            .window = window,
             .current_frame = 0,
             .framebuffer_resized = false,
         };
@@ -123,7 +123,7 @@ const RenderContext = struct {
 
     fn deinit(self: Self) void {
         self.vulkan.deinit();
-        self.glfw.deinit();
+        self.window.deinit();
     }
 
     fn renderFrame(self: *Self) !void {
@@ -133,12 +133,12 @@ const RenderContext = struct {
     }
 
     fn shouldClose(self: Self) bool {
-        return glfwWindowShouldClose(self.glfw.window) != GLFW_FALSE;
+        return glfwWindowShouldClose(self.window.window) != GLFW_FALSE;
     }
 
     fn drawFrame(self: *@This()) !void {
         var vulkan = &self.vulkan;
-        var window = self.glfw.window;
+        var window = &self.window;
         var current_frame = self.current_frame;
         try checkSuccess(
             vkWaitForFences(vulkan.device, 1, &vulkan.sync.in_flight_fences[current_frame], VK_TRUE, MAX_UINT64),
@@ -244,7 +244,7 @@ const Vulkan = struct {
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     // TODO: use errdefer to clean up stuff in case of errors
-    pub fn init(allocator: *Allocator, window: *GLFWwindow) !Vulkan {
+    pub fn init(allocator: *Allocator, window: *const Window) !Vulkan {
         if (enable_validation_layers) {
             if (!try dbg.checkValidationLayerSupport(allocator)) {
                 return error.ValidationLayerRequestedButNotAvailable;
@@ -293,7 +293,7 @@ const Vulkan = struct {
             debug_messenger = try dbg.initDebugMessenger(instance);
         }
 
-        const surface = try createSurface(instance, window);
+        const surface = try window.createSurface(instance);
 
         const physical_device = try pickPhysicalDevice(allocator, instance, surface);
         const indices = try findQueueFamilies(allocator, physical_device, surface);
@@ -406,7 +406,7 @@ const Vulkan = struct {
         self.swap_chain.deinit(self.device);
     }
 
-    fn recreateSwapChain(self: *Vulkan, window: *GLFWwindow) !void {
+    fn recreateSwapChain(self: *Vulkan, window: *const Window) !void {
         try checkSuccess(vkDeviceWaitIdle(self.device), error.VulkanDeviceWaitIdleFailure);
 
         self.cleanUpSwapChain();
@@ -652,15 +652,6 @@ fn createLogicalDevice(
     );
 
     return device;
-}
-
-fn createSurface(instance: VkInstance, window: *GLFWwindow) !VkSurfaceKHR {
-    var surface: VkSurfaceKHR = undefined;
-    try checkSuccess(
-        glfwCreateWindowSurface(instance, window, null, &surface),
-        error.VulkanWindowSurfaceCreationFailed,
-    );
-    return surface;
 }
 
 fn createShaderModule(device: VkDevice, code: []align(@alignOf(u32)) const u8) !VkShaderModule {
