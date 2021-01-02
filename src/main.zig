@@ -132,14 +132,14 @@ const RenderContext = struct {
         var window = self.glfw.window;
         var current_frame = self.current_frame;
         try checkSuccess(
-            vkWaitForFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame], VK_TRUE, MAX_UINT64),
+            vkWaitForFences(vulkan.device, 1, &vulkan.sync.in_flight_fences[current_frame], VK_TRUE, MAX_UINT64),
             error.VulkanWaitForFencesFailure,
         );
 
         var image_index: u32 = 0;
         {
             const result = vkAcquireNextImageKHR(
-                vulkan.logical_device,
+                vulkan.device,
                 vulkan.swap_chain.swap_chain,
                 MAX_UINT64,
                 vulkan.sync.image_available_semaphores[current_frame],
@@ -160,7 +160,7 @@ const RenderContext = struct {
         // check if a previous frame is using this image (i.e. it has a fence to wait on)
         if (vulkan.sync.images_in_flight[image_index]) |fence| {
             try checkSuccess(
-                vkWaitForFences(vulkan.logical_device, 1, &fence, VK_TRUE, MAX_UINT64),
+                vkWaitForFences(vulkan.device, 1, &fence, VK_TRUE, MAX_UINT64),
                 error.VulkanWaitForFenceFailure,
             );
         }
@@ -183,7 +183,7 @@ const RenderContext = struct {
         };
 
         try checkSuccess(
-            vkResetFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame]),
+            vkResetFences(vulkan.device, 1, &vulkan.sync.in_flight_fences[current_frame]),
             error.VulkanResetFencesFailure,
         );
 
@@ -255,7 +255,7 @@ const Vulkan = struct {
     allocator: *Allocator,
     instance: VkInstance,
     physical_device: VkPhysicalDevice,
-    logical_device: VkDevice,
+    device: VkDevice,
     graphics_queue: VkQueue,
     present_queue: VkQueue,
     queue_family_indices: QueueFamilyIndices,
@@ -327,11 +327,11 @@ const Vulkan = struct {
             return error.VulkanSuitableQueuFamiliesNotFound;
         }
 
-        const logical_device = try createLogicalDevice(allocator, physical_device, indices);
+        const device = try createLogicalDevice(allocator, physical_device, indices);
 
         var graphics_queue: VkQueue = undefined;
         vkGetDeviceQueue(
-            logical_device,
+            device,
             indices.graphics_family.?,
             0,
             &graphics_queue,
@@ -339,7 +339,7 @@ const Vulkan = struct {
 
         var present_queue: VkQueue = undefined;
         vkGetDeviceQueue(
-            logical_device,
+            device,
             indices.present_family.?,
             0,
             &present_queue,
@@ -348,22 +348,22 @@ const Vulkan = struct {
         const swap_chain = try SwapChain.init(
             allocator,
             physical_device,
-            logical_device,
+            device,
             window,
             surface,
             indices,
         );
 
-        const render_pass = try createRenderPass(logical_device, swap_chain.image_format, swap_chain.extent);
-        const pipeline = try Pipeline.init(logical_device, render_pass, swap_chain.extent);
+        const render_pass = try createRenderPass(device, swap_chain.image_format, swap_chain.extent);
+        const pipeline = try Pipeline.init(device, render_pass, swap_chain.extent);
 
-        const swap_chain_framebuffers = try createFramebuffers(allocator, logical_device, render_pass, swap_chain);
+        const swap_chain_framebuffers = try createFramebuffers(allocator, device, render_pass, swap_chain);
 
-        const command_pool = try createCommandPool(logical_device, indices);
+        const command_pool = try createCommandPool(device, indices);
 
         const command_buffers = try createCommandBuffers(
             allocator,
-            logical_device,
+            device,
             render_pass,
             command_pool,
             swap_chain_framebuffers,
@@ -371,14 +371,14 @@ const Vulkan = struct {
             pipeline.pipeline,
         );
 
-        var sync = try VulkanSynchronization.init(allocator, logical_device, swap_chain.images.len);
+        var sync = try VulkanSynchronization.init(allocator, device, swap_chain.images.len);
         errdefer sync.deinit();
 
         return Vulkan{
             .allocator = allocator,
             .instance = instance,
             .physical_device = physical_device,
-            .logical_device = logical_device,
+            .device = device,
             .graphics_queue = graphics_queue,
             .present_queue = present_queue,
             .queue_family_indices = indices,
@@ -395,17 +395,17 @@ const Vulkan = struct {
     }
 
     pub fn deinit(self: *const Vulkan) void {
-        const result = vkDeviceWaitIdle(self.logical_device);
+        const result = vkDeviceWaitIdle(self.device);
         if (result != VkResult.VK_SUCCESS) {
             log.warn("Unable to wait for Vulkan device to be idle before cleanup", .{});
         }
 
         self.cleanUpSwapChain();
 
-        self.sync.deinit(self.logical_device);
+        self.sync.deinit(self.device);
 
-        vkDestroyCommandPool(self.logical_device, self.command_pool, null);
-        vkDestroyDevice(self.logical_device, null);
+        vkDestroyCommandPool(self.device, self.command_pool, null);
+        vkDestroyDevice(self.device, null);
         if (self.debug_messenger) |messenger| {
             dbg.deinitDebugMessenger(self.instance, messenger);
         }
@@ -414,62 +414,60 @@ const Vulkan = struct {
     }
 
     fn cleanUpSwapChain(self: *const Vulkan) void {
-        const device = self.logical_device;
-
         for (self.swap_chain_framebuffers) |framebuffer| {
-            vkDestroyFramebuffer(device, framebuffer, null);
+            vkDestroyFramebuffer(self.device, framebuffer, null);
         }
         self.allocator.free(self.swap_chain_framebuffers);
 
         vkFreeCommandBuffers(
-            device,
+            self.device,
             self.command_pool,
             @intCast(u32, self.command_buffers.len),
             self.command_buffers.ptr,
         );
         self.allocator.free(self.command_buffers);
 
-        self.pipeline.deinit(device);
-        vkDestroyRenderPass(device, self.render_pass, null);
-        self.swap_chain.deinit(device);
+        self.pipeline.deinit(self.device);
+        vkDestroyRenderPass(self.device, self.render_pass, null);
+        self.swap_chain.deinit(self.device);
     }
 
     fn recreateSwapChain(self: *Vulkan, window: *GLFWwindow) !void {
-        try checkSuccess(vkDeviceWaitIdle(self.logical_device), error.VulkanDeviceWaitIdleFailure);
+        try checkSuccess(vkDeviceWaitIdle(self.device), error.VulkanDeviceWaitIdleFailure);
 
         self.cleanUpSwapChain();
 
         self.swap_chain = try SwapChain.init(
             self.allocator,
             self.physical_device,
-            self.logical_device,
+            self.device,
             window,
             self.surface,
             self.queue_family_indices,
         );
 
         self.render_pass = try createRenderPass(
-            self.logical_device,
+            self.device,
             self.swap_chain.image_format,
             self.swap_chain.extent,
         );
 
         self.pipeline = try Pipeline.init(
-            self.logical_device,
+            self.device,
             self.render_pass,
             self.swap_chain.extent,
         );
 
         self.swap_chain_framebuffers = try createFramebuffers(
             self.allocator,
-            self.logical_device,
+            self.device,
             self.render_pass,
             self.swap_chain,
         );
 
         self.command_buffers = try createCommandBuffers(
             self.allocator,
-            self.logical_device,
+            self.device,
             self.render_pass,
             self.command_pool,
             self.swap_chain_framebuffers,
