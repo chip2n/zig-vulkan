@@ -27,6 +27,20 @@ const device_extensions = [_][*:0]const u8{
 // TODO make non-global
 var frame_buffer_resized = false;
 
+pub fn main() !void {
+    var system = System().init();
+    defer system.deinit();
+
+    const allocator = system.allocator();
+
+    var context = try RenderContext.init(allocator);
+    defer context.deinit();
+
+    while (!context.shouldClose()) {
+        try context.renderFrame();
+    }
+}
+
 fn System() type {
     if (builtin.mode == builtin.Mode.Debug) {
         return DebugSystem();
@@ -83,6 +97,8 @@ const RenderContext = struct {
     current_frame: usize,
     frame_buffer_resized: bool,
 
+    const Self = @This();
+
     fn init(allocator: *Allocator) !RenderContext {
         const glfw = try GLFW.init();
         errdefer glfw.deinit();
@@ -98,120 +114,109 @@ const RenderContext = struct {
         };
     }
 
-    fn deinit(self: @This()) void {
+    fn deinit(self: Self) void {
         self.vulkan.deinit();
         self.glfw.deinit();
     }
 
-    fn render_frame(self: *@This()) !void {
+    fn renderFrame(self: *Self) !void {
         glfwPollEvents();
-        try drawFrame(&self.vulkan, self.glfw.window, self.current_frame);
+        try drawFrame(self);
         self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
-    fn should_close(self: @This()) bool {
+    fn shouldClose(self: Self) bool {
         return glfwWindowShouldClose(self.glfw.window) != GLFW_FALSE;
     }
-};
 
-pub fn main() !void {
-    var system = System().init();
-    defer system.deinit();
-
-    const allocator = system.allocator();
-
-    var context = try RenderContext.init(allocator);
-    defer context.deinit();
-
-    while (!context.should_close()) {
-        try context.render_frame();
-    }
-}
-
-fn drawFrame(vulkan: *Vulkan, window: *GLFWwindow, current_frame: usize) !void {
-    try checkSuccess(
-        vkWaitForFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame], VK_TRUE, MAX_UINT64),
-        error.VulkanWaitForFencesFailure,
-    );
-
-    var image_index: u32 = 0;
-    {
-        const result = vkAcquireNextImageKHR(
-            vulkan.logical_device,
-            vulkan.swap_chain.swap_chain,
-            MAX_UINT64,
-            vulkan.sync.image_available_semaphores[current_frame],
-            null,
-            &image_index,
-        );
-        if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR) {
-            // swap chain cannot be used (e.g. due to window resize)
-            try vulkan.recreateSwapChain(window);
-            return;
-        } else if (result != VkResult.VK_SUCCESS and result != VkResult.VK_SUBOPTIMAL_KHR) {
-            return error.VulkanSwapChainAcquireNextImageFailure;
-        } else {
-            // swap chain may be suboptimal, but we go ahead and render anyways and recreate it later
-        }
-    }
-
-    // check if a previous frame is using this image (i.e. it has a fence to wait on)
-    if (vulkan.sync.images_in_flight[image_index]) |fence| {
+    fn drawFrame(self: *@This()) !void {
+        var vulkan = &self.vulkan;
+        var window = self.glfw.window;
+        var current_frame = self.current_frame;
         try checkSuccess(
-            vkWaitForFences(vulkan.logical_device, 1, &fence, VK_TRUE, MAX_UINT64),
-            error.VulkanWaitForFenceFailure,
+            vkWaitForFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame], VK_TRUE, MAX_UINT64),
+            error.VulkanWaitForFencesFailure,
         );
-    }
-    // mark the image as now being in use by this frame
-    vulkan.sync.images_in_flight[image_index] = vulkan.sync.in_flight_fences[current_frame];
 
-    const wait_semaphores = [_]VkSemaphore{vulkan.sync.image_available_semaphores[current_frame]};
-    const signal_semaphores = [_]VkSemaphore{vulkan.sync.render_finished_semaphores[current_frame]};
-    const wait_stages = [_]VkPipelineStageFlags{VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    const submit_info = VkSubmitInfo{
-        .sType = VkStructureType.VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pNext = null,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &wait_semaphores,
-        .pWaitDstStageMask = &wait_stages,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &vulkan.command_buffers[image_index],
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &signal_semaphores,
-    };
+        var image_index: u32 = 0;
+        {
+            const result = vkAcquireNextImageKHR(
+                vulkan.logical_device,
+                vulkan.swap_chain.swap_chain,
+                MAX_UINT64,
+                vulkan.sync.image_available_semaphores[current_frame],
+                null,
+                &image_index,
+            );
+            if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR) {
+                // swap chain cannot be used (e.g. due to window resize)
+                try vulkan.recreateSwapChain(window);
+                return;
+            } else if (result != VkResult.VK_SUCCESS and result != VkResult.VK_SUBOPTIMAL_KHR) {
+                return error.VulkanSwapChainAcquireNextImageFailure;
+            } else {
+                // swap chain may be suboptimal, but we go ahead and render anyways and recreate it later
+            }
+        }
 
-    try checkSuccess(
-        vkResetFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame]),
-        error.VulkanResetFencesFailure,
-    );
+        // check if a previous frame is using this image (i.e. it has a fence to wait on)
+        if (vulkan.sync.images_in_flight[image_index]) |fence| {
+            try checkSuccess(
+                vkWaitForFences(vulkan.logical_device, 1, &fence, VK_TRUE, MAX_UINT64),
+                error.VulkanWaitForFenceFailure,
+            );
+        }
+        // mark the image as now being in use by this frame
+        vulkan.sync.images_in_flight[image_index] = vulkan.sync.in_flight_fences[current_frame];
 
-    try checkSuccess(
-        vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, vulkan.sync.in_flight_fences[current_frame]),
-        error.VulkanQueueSubmitFailure,
-    );
+        const wait_semaphores = [_]VkSemaphore{vulkan.sync.image_available_semaphores[current_frame]};
+        const signal_semaphores = [_]VkSemaphore{vulkan.sync.render_finished_semaphores[current_frame]};
+        const wait_stages = [_]VkPipelineStageFlags{VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        const submit_info = VkSubmitInfo{
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = null,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &wait_semaphores,
+            .pWaitDstStageMask = &wait_stages,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &vulkan.command_buffers[image_index],
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &signal_semaphores,
+        };
 
-    const swap_chains = [_]VkSwapchainKHR{vulkan.swap_chain.swap_chain};
-    const present_info = VkPresentInfoKHR{
-        .sType = VkStructureType.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .pNext = null,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &signal_semaphores,
-        .swapchainCount = 1,
-        .pSwapchains = &swap_chains,
-        .pImageIndices = &image_index,
-        .pResults = null,
-    };
+        try checkSuccess(
+            vkResetFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame]),
+            error.VulkanResetFencesFailure,
+        );
 
-    {
-        const result = vkQueuePresentKHR(vulkan.present_queue, &present_info);
-        if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR or frame_buffer_resized) {
-            frame_buffer_resized = false;
-            try vulkan.recreateSwapChain(window);
-        } else if (result != VkResult.VK_SUCCESS) {
-            return error.VulkanQueuePresentFailure;
+        try checkSuccess(
+            vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, vulkan.sync.in_flight_fences[current_frame]),
+            error.VulkanQueueSubmitFailure,
+        );
+
+        const swap_chains = [_]VkSwapchainKHR{vulkan.swap_chain.swap_chain};
+        const present_info = VkPresentInfoKHR{
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = null,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &signal_semaphores,
+            .swapchainCount = 1,
+            .pSwapchains = &swap_chains,
+            .pImageIndices = &image_index,
+            .pResults = null,
+        };
+
+        {
+            const result = vkQueuePresentKHR(vulkan.present_queue, &present_info);
+            if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR or frame_buffer_resized) {
+                frame_buffer_resized = false;
+                try vulkan.recreateSwapChain(window);
+            } else if (result != VkResult.VK_SUCCESS) {
+                return error.VulkanQueuePresentFailure;
+            }
         }
     }
-}
+};
 
 const GLFW = struct {
     window: *GLFWwindow,
