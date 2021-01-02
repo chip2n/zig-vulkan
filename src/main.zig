@@ -123,6 +123,16 @@ fn drawFrame(vulkan: *Vulkan, current_frame: usize) !void {
         error.VulkanAcquireNextFrameFailure,
     );
 
+    // check if a previous frame is using this image (i.e. it has a fence to wait on)
+    if (vulkan.sync.images_in_flight[image_index]) |fence| {
+        try checkSuccess(
+            vkWaitForFences(vulkan.logical_device, 1, &fence, VK_TRUE, MAX_UINT64),
+            error.VulkanWaitForFenceFailure,
+        );
+    }
+    // mark the image as now being in use by this frame
+    vulkan.sync.images_in_flight[image_index] = vulkan.sync.in_flight_fences[current_frame];
+
     const wait_semaphores = [_]VkSemaphore{vulkan.sync.image_available_semaphores[current_frame]};
     const signal_semaphores = [_]VkSemaphore{vulkan.sync.render_finished_semaphores[current_frame]};
     const wait_stages = [_]VkPipelineStageFlags{VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -137,6 +147,11 @@ fn drawFrame(vulkan: *Vulkan, current_frame: usize) !void {
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &signal_semaphores,
     };
+
+    try checkSuccess(
+        vkResetFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame]),
+        error.VulkanResetFencesFailure,
+    );
 
     try checkSuccess(
         vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, vulkan.sync.in_flight_fences[current_frame]),
@@ -305,7 +320,7 @@ const Vulkan = struct {
             pipeline.pipeline,
         );
 
-        var sync = try VulkanSynchronization.init(allocator, logical_device);
+        var sync = try VulkanSynchronization.init(allocator, logical_device, swap_chain.images.len);
         errdefer sync.deinit();
 
         return Vulkan{
@@ -964,8 +979,9 @@ const VulkanSynchronization = struct {
     image_available_semaphores: []VkSemaphore,
     render_finished_semaphores: []VkSemaphore,
     in_flight_fences: []VkFence,
+    images_in_flight: []?VkFence,
 
-    fn init(allocator: *Allocator, device: VkDevice) !Self {
+    fn init(allocator: *Allocator, device: VkDevice, image_count: usize) !Self {
         var image_available_semaphores = try allocator.alloc(VkSemaphore, MAX_FRAMES_IN_FLIGHT);
         errdefer allocator.free(image_available_semaphores);
 
@@ -974,6 +990,9 @@ const VulkanSynchronization = struct {
 
         var in_flight_fences = try allocator.alloc(VkFence, MAX_FRAMES_IN_FLIGHT);
         errdefer allocator.free(in_flight_fences);
+
+        var images_in_flight = try allocator.alloc(?VkFence, image_count);
+        errdefer allocator.free(images_in_flight);
 
         var i: usize = 0;
         while (i < MAX_FRAMES_IN_FLIGHT) : (i += 1) {
@@ -996,11 +1015,17 @@ const VulkanSynchronization = struct {
             in_flight_fences[i] = fence;
         }
 
+        i = 0;
+        while (i < image_count) : (i += 1) {
+            images_in_flight[i] = null;
+        }
+
         return VulkanSynchronization{
             .allocator = allocator,
             .image_available_semaphores = image_available_semaphores,
             .render_finished_semaphores = render_finished_semaphores,
             .in_flight_fences = in_flight_fences,
+            .images_in_flight = images_in_flight,
         };
     }
 
@@ -1019,6 +1044,8 @@ const VulkanSynchronization = struct {
             vkDestroyFence(device, fence, null);
         }
         self.allocator.free(self.in_flight_fences);
+
+        self.allocator.free(self.images_in_flight);
     }
 };
 
