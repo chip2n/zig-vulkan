@@ -127,13 +127,13 @@ const RenderContext = struct {
     }
 
     fn renderFrame(self: *Self) !void {
-        glfwPollEvents();
+        self.window.pollEvents();
         try drawFrame(self);
         self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
     fn shouldClose(self: Self) bool {
-        return glfwWindowShouldClose(self.window.window) != GLFW_FALSE;
+        return self.window.shouldClose();
     }
 
     fn drawFrame(self: *@This()) !void {
@@ -453,21 +453,10 @@ const Vulkan = struct {
 
 /// caller must free returned memory
 fn getRequiredExtensions(allocator: *Allocator) ![][*:0]const u8 {
-    var glfw_extension_count: u32 = 0;
-    const glfw_extensions = @ptrCast(
-        [*]const [*:0]const u8,
-        glfwGetRequiredInstanceExtensions(&glfw_extension_count),
-    );
-
-    var extensions = ArrayList([*:0]const u8).init(allocator);
-    errdefer extensions.deinit();
-
-    try extensions.appendSlice(glfw_extensions[0..glfw_extension_count]);
-
+    var extensions = try getWindowRequiredExtensions(allocator);
     if (enable_validation_layers) {
         try extensions.append(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
-
     return extensions.toOwnedSlice();
 }
 

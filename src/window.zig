@@ -1,3 +1,5 @@
+const std = @import("std");
+
 usingnamespace @import("c.zig");
 usingnamespace @import("utils.zig");
 
@@ -40,6 +42,14 @@ pub const Window = struct {
         _ = glfwSetFramebufferSizeCallback(self.window, framebufferResizeCallback);
     }
 
+    pub fn pollEvents(self: *const Self) void {
+        glfwPollEvents();
+    }
+
+    pub fn shouldClose(self: *const Self) bool {
+        return glfwWindowShouldClose(self.window) != GLFW_FALSE;
+    }
+
     pub fn getFramebufferSize(self: *const Self) Size {
         var width: c_int = 0;
         var height: c_int = 0;
@@ -59,6 +69,21 @@ pub const Window = struct {
         return surface;
     }
 };
+
+pub fn getWindowRequiredExtensions(allocator: *std.mem.Allocator) !std.ArrayList([*:0]const u8) {
+    var glfw_extension_count: u32 = 0;
+    const glfw_extensions = @ptrCast(
+        [*]const [*:0]const u8,
+        glfwGetRequiredInstanceExtensions(&glfw_extension_count),
+    );
+
+    var extensions = std.ArrayList([*:0]const u8).init(allocator);
+    errdefer extensions.deinit();
+
+    try extensions.appendSlice(glfw_extensions[0..glfw_extension_count]);
+
+    return extensions;
+}
 
 fn framebufferResizeCallback(window: ?*GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
     var callback = @ptrCast(*ResizeCallback, @alignCast(@alignOf(*ResizeCallback), glfwGetWindowUserPointer(window)));
