@@ -24,9 +24,6 @@ const device_extensions = [_][*:0]const u8{
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
-// TODO make non-global
-var frame_buffer_resized = false;
-
 pub fn main() !void {
     var system = System().init();
     defer system.deinit();
@@ -35,6 +32,7 @@ pub fn main() !void {
 
     var context = try RenderContext.init(allocator);
     defer context.deinit();
+    context.glfw.register_resize_callback(&context);
 
     while (!context.shouldClose()) {
         try context.renderFrame();
@@ -208,8 +206,8 @@ const RenderContext = struct {
 
         {
             const result = vkQueuePresentKHR(vulkan.present_queue, &present_info);
-            if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR or frame_buffer_resized) {
-                frame_buffer_resized = false;
+            if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR or self.frame_buffer_resized) {
+                self.frame_buffer_resized = false;
                 try vulkan.recreateSwapChain(window);
             } else if (result != VkResult.VK_SUCCESS) {
                 return error.VulkanQueuePresentFailure;
@@ -234,9 +232,12 @@ const GLFW = struct {
             return error.GLFWInitializationFailed;
         }
 
-        _ = glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
-
         return GLFW{ .window = window.? };
+    }
+
+    pub fn register_resize_callback(self: *@This(), context: *RenderContext) void {
+        glfwSetWindowUserPointer(self.window, context);
+        _ = glfwSetFramebufferSizeCallback(self.window, framebufferResizeCallback);
     }
 
     pub fn deinit(self: *const GLFW) void {
@@ -246,7 +247,8 @@ const GLFW = struct {
 };
 
 fn framebufferResizeCallback(window: ?*GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
-    frame_buffer_resized = true;
+    var context = @ptrCast(*RenderContext, @alignCast(@alignOf(*RenderContext), glfwGetWindowUserPointer(window)));
+    context.frame_buffer_resized = true;
 }
 
 const Vulkan = struct {
