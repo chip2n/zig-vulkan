@@ -343,11 +343,21 @@ const Vulkan = struct {
     }
 
     pub fn deinit(self: *const Vulkan) void {
-        self.sync.deinit(self.logical_device);
+        self.cleanUpSwapChain();
 
+        self.sync.deinit(self.logical_device);
         self.allocator.free(self.command_buffers);
 
         vkDestroyCommandPool(self.logical_device, self.command_pool, null);
+        vkDestroyDevice(self.logical_device, null);
+        if (self.debug_messenger) |messenger| {
+            dbg.deinitDebugMessenger(self.instance, messenger);
+        }
+        vkDestroySurfaceKHR(self.instance, self.surface, null);
+        vkDestroyInstance(self.instance, null);
+    }
+
+    fn cleanUpSwapChain(self: *const Vulkan) void {
         for (self.swap_chain_framebuffers) |framebuffer| {
             vkDestroyFramebuffer(self.logical_device, framebuffer, null);
         }
@@ -355,12 +365,6 @@ const Vulkan = struct {
         self.pipeline.deinit(self.logical_device);
         vkDestroyRenderPass(self.logical_device, self.render_pass, null);
         self.swap_chain.deinit(self.logical_device);
-        vkDestroyDevice(self.logical_device, null);
-        if (self.debug_messenger) |messenger| {
-            dbg.deinitDebugMessenger(self.instance, messenger);
-        }
-        vkDestroySurfaceKHR(self.instance, self.surface, null);
-        vkDestroyInstance(self.instance, null);
     }
 };
 
