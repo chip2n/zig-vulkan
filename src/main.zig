@@ -93,7 +93,7 @@ const RenderContext = struct {
     glfw: GLFW,
     vulkan: Vulkan,
     current_frame: usize,
-    frame_buffer_resized: bool,
+    framebuffer_resized: bool,
 
     const Self = @This();
 
@@ -108,7 +108,7 @@ const RenderContext = struct {
             .vulkan = vulkan,
             .glfw = glfw,
             .current_frame = 0,
-            .frame_buffer_resized = false,
+            .framebuffer_resized = false,
         };
     }
 
@@ -206,8 +206,8 @@ const RenderContext = struct {
 
         {
             const result = vkQueuePresentKHR(vulkan.present_queue, &present_info);
-            if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR or self.frame_buffer_resized) {
-                self.frame_buffer_resized = false;
+            if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR or self.framebuffer_resized) {
+                self.framebuffer_resized = false;
                 try vulkan.recreateSwapChain(window);
             } else if (result != VkResult.VK_SUCCESS) {
                 return error.VulkanQueuePresentFailure;
@@ -248,7 +248,7 @@ const GLFW = struct {
 
 fn framebufferResizeCallback(window: ?*GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
     var context = @ptrCast(*RenderContext, @alignCast(@alignOf(*RenderContext), glfwGetWindowUserPointer(window)));
-    context.frame_buffer_resized = true;
+    context.framebuffer_resized = true;
 }
 
 const Vulkan = struct {
