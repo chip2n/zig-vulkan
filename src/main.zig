@@ -121,6 +121,8 @@ pub fn main() !void {
     const allocator = system.allocator();
 
     var context = try RenderContext.init(allocator);
+    defer context.deinit();
+
     while (!context.should_close()) {
         try context.render_frame();
     }
@@ -386,9 +388,9 @@ const Vulkan = struct {
     }
 
     pub fn deinit(self: *const Vulkan) void {
-        const result = vkDeviceWaitIdle(vulkan.logical_device);
-        if (result != VK_SUCCESS) {
-            log.warn("Unable to wait for Vulkan device to be idle before cleanup");
+        const result = vkDeviceWaitIdle(self.logical_device);
+        if (result != VkResult.VK_SUCCESS) {
+            log.warn("Unable to wait for Vulkan device to be idle before cleanup", .{});
         }
 
         self.cleanUpSwapChain();
