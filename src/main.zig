@@ -89,39 +89,39 @@ pub fn main() !void {
     var current_frame: usize = 0;
     while (glfwWindowShouldClose(glfw.window) == GLFW_FALSE) {
         glfwPollEvents();
-        try drawFrame(&vulkan, current_frame);
+        try drawFrame(&vulkan, glfw.window, current_frame);
         current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
-    try checkSuccess(
-        vkDeviceWaitIdle(vulkan.logical_device),
-        error.VulkanDeviceWaitIdleFailure,
-    );
+    try checkSuccess(vkDeviceWaitIdle(vulkan.logical_device), error.VulkanDeviceWaitIdleFailure);
 }
 
-fn drawFrame(vulkan: *Vulkan, current_frame: usize) !void {
+fn drawFrame(vulkan: *Vulkan, window: *GLFWwindow, current_frame: usize) !void {
     try checkSuccess(
         vkWaitForFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame], VK_TRUE, MAX_UINT64),
         error.VulkanWaitForFencesFailure,
     );
 
-    try checkSuccess(
-        vkResetFences(vulkan.logical_device, 1, &vulkan.sync.in_flight_fences[current_frame]),
-        error.VulkanResetFencesFailure,
-    );
-
     var image_index: u32 = 0;
-    try checkSuccess(
-        vkAcquireNextImageKHR(
+    {
+        const result = vkAcquireNextImageKHR(
             vulkan.logical_device,
             vulkan.swap_chain.swap_chain,
             MAX_UINT64,
             vulkan.sync.image_available_semaphores[current_frame],
             null,
             &image_index,
-        ),
-        error.VulkanAcquireNextFrameFailure,
-    );
+        );
+        if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR) {
+            // swap chain cannot be used (e.g. due to window resize)
+            try vulkan.recreateSwapChain(window);
+            return;
+        } else if (result != VkResult.VK_SUCCESS and result != VkResult.VK_SUBOPTIMAL_KHR) {
+            return error.VulkanSwapChainAcquireNextImageFailure;
+        } else {
+            // swap chain may be suboptimal, but we go ahead and render anyways and recreate it later
+        }
+    }
 
     // check if a previous frame is using this image (i.e. it has a fence to wait on)
     if (vulkan.sync.images_in_flight[image_index]) |fence| {
@@ -170,10 +170,14 @@ fn drawFrame(vulkan: *Vulkan, current_frame: usize) !void {
         .pResults = null,
     };
 
-    try checkSuccess(
-        vkQueuePresentKHR(vulkan.present_queue, &present_info),
-        error.VulkanQueuePresentFailure,
-    );
+    {
+        const result = vkQueuePresentKHR(vulkan.present_queue, &present_info);
+        if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR) {
+            try vulkan.recreateSwapChain(window);
+        } else if (result != VkResult.VK_SUCCESS) {
+            return error.VulkanQueuePresentFailure;
+        }
+    }
 }
 
 const GLFW = struct {
@@ -186,7 +190,7 @@ const GLFW = struct {
         }
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
         const window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan window", null, null);
         if (window == null) {
             return error.GLFWInitializationFailed;
@@ -208,6 +212,7 @@ const Vulkan = struct {
     logical_device: VkDevice,
     graphics_queue: VkQueue,
     present_queue: VkQueue,
+    queue_family_indices: QueueFamilyIndices,
     surface: VkSurfaceKHR,
     swap_chain: SwapChain,
     pipeline: Pipeline,
@@ -330,6 +335,7 @@ const Vulkan = struct {
             .logical_device = logical_device,
             .graphics_queue = graphics_queue,
             .present_queue = present_queue,
+            .queue_family_indices = indices,
             .surface = surface,
             .swap_chain = swap_chain,
             .pipeline = pipeline,
@@ -346,7 +352,6 @@ const Vulkan = struct {
         self.cleanUpSwapChain();
 
         self.sync.deinit(self.logical_device);
-        self.allocator.free(self.command_buffers);
 
         vkDestroyCommandPool(self.logical_device, self.command_pool, null);
         vkDestroyDevice(self.logical_device, null);
@@ -358,13 +363,68 @@ const Vulkan = struct {
     }
 
     fn cleanUpSwapChain(self: *const Vulkan) void {
+        const device = self.logical_device;
+
         for (self.swap_chain_framebuffers) |framebuffer| {
-            vkDestroyFramebuffer(self.logical_device, framebuffer, null);
+            vkDestroyFramebuffer(device, framebuffer, null);
         }
         self.allocator.free(self.swap_chain_framebuffers);
-        self.pipeline.deinit(self.logical_device);
-        vkDestroyRenderPass(self.logical_device, self.render_pass, null);
-        self.swap_chain.deinit(self.logical_device);
+
+        vkFreeCommandBuffers(
+            device,
+            self.command_pool,
+            @intCast(u32, self.command_buffers.len),
+            self.command_buffers.ptr,
+        );
+        self.allocator.free(self.command_buffers);
+
+        self.pipeline.deinit(device);
+        vkDestroyRenderPass(device, self.render_pass, null);
+        self.swap_chain.deinit(device);
+    }
+
+    fn recreateSwapChain(self: *Vulkan, window: *GLFWwindow) !void {
+        try checkSuccess(vkDeviceWaitIdle(self.logical_device), error.VulkanDeviceWaitIdleFailure);
+
+        self.cleanUpSwapChain();
+
+        self.swap_chain = try SwapChain.init(
+            self.allocator,
+            self.physical_device,
+            self.logical_device,
+            window,
+            self.surface,
+            self.queue_family_indices,
+        );
+
+        self.render_pass = try createRenderPass(
+            self.logical_device,
+            self.swap_chain.image_format,
+            self.swap_chain.extent,
+        );
+
+        self.pipeline = try Pipeline.init(
+            self.logical_device,
+            self.render_pass,
+            self.swap_chain.extent,
+        );
+
+        self.swap_chain_framebuffers = try createFramebuffers(
+            self.allocator,
+            self.logical_device,
+            self.render_pass,
+            self.swap_chain,
+        );
+
+        self.command_buffers = try createCommandBuffers(
+            self.allocator,
+            self.logical_device,
+            self.render_pass,
+            self.command_pool,
+            self.swap_chain_framebuffers,
+            self.swap_chain.extent,
+            self.pipeline.pipeline,
+        );
     }
 };
 
