@@ -237,6 +237,8 @@ fn createSwapChain(
         create_info.pQueueFamilyIndices = &queue_family_indices;
     }
 
+    // TODO There seems to be a race condition here, since the validation layer reports errors during resizing,
+    // caused by a mismatch between extents.
     var swap_chain: VkSwapchainKHR = undefined;
     try checkSuccess(
         vkCreateSwapchainKHR(logical_device, &create_info, null, &swap_chain),
