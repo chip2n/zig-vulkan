@@ -46,8 +46,17 @@ pub const Window = struct {
         glfwPollEvents();
     }
 
+    pub fn waitEvents(self: *const Self) void {
+        glfwWaitEvents();
+    }
+
     pub fn shouldClose(self: *const Self) bool {
         return glfwWindowShouldClose(self.window) != GLFW_FALSE;
+    }
+
+    pub fn isMinimized(self: *const Self) bool {
+        var size = self.getFramebufferSize();
+        return size.width == 0 or size.height == 0;
     }
 
     pub fn getFramebufferSize(self: *const Self) Size {

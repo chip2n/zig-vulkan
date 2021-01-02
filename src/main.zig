@@ -34,7 +34,7 @@ pub fn main() !void {
 
     var callback = ResizeCallback{
         .data = &context,
-        .cb = framebufferResizeCallback
+        .cb = framebufferResizeCallback,
     };
     context.window.registerResizeCallback(&callback);
 
@@ -407,6 +407,10 @@ const Vulkan = struct {
     }
 
     fn recreateSwapChain(self: *Vulkan, window: *const Window) !void {
+        while (window.isMinimized()) {
+            window.waitEvents();
+        }
+
         try checkSuccess(vkDeviceWaitIdle(self.device), error.VulkanDeviceWaitIdleFailure);
 
         self.cleanUpSwapChain();
