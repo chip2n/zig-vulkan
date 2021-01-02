@@ -24,6 +24,9 @@ const device_extensions = [_][*:0]const u8{
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
+// TODO make non-global
+var frame_buffer_resized = false;
+
 fn System() type {
     if (builtin.mode == builtin.Mode.Debug) {
         return DebugSystem();
@@ -172,7 +175,8 @@ fn drawFrame(vulkan: *Vulkan, window: *GLFWwindow, current_frame: usize) !void {
 
     {
         const result = vkQueuePresentKHR(vulkan.present_queue, &present_info);
-        if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR) {
+        if (result == VkResult.VK_ERROR_OUT_OF_DATE_KHR or result == VkResult.VK_SUBOPTIMAL_KHR or frame_buffer_resized) {
+            frame_buffer_resized = false;
             try vulkan.recreateSwapChain(window);
         } else if (result != VkResult.VK_SUCCESS) {
             return error.VulkanQueuePresentFailure;
@@ -196,6 +200,8 @@ const GLFW = struct {
             return error.GLFWInitializationFailed;
         }
 
+        _ = glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
+
         return GLFW{ .window = window.? };
     }
 
@@ -204,6 +210,10 @@ const GLFW = struct {
         glfwTerminate();
     }
 };
+
+fn framebufferResizeCallback(window: ?*GLFWwindow, width: c_int, height: c_int) callconv(.C) void {
+    frame_buffer_resized = true;
+}
 
 const Vulkan = struct {
     allocator: *Allocator,
