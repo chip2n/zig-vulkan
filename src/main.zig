@@ -5,6 +5,7 @@ const Allocator = mem.Allocator;
 const ArrayList = std.ArrayList;
 const log = std.log;
 const dbg = @import("debug.zig");
+const vk = @import("vulkan.zig");
 
 usingnamespace @import("c.zig");
 usingnamespace @import("queue_family.zig");
@@ -370,9 +371,9 @@ const Vulkan = struct {
 
         const swap_chain_framebuffers = try createFramebuffers(allocator, device, render_pass, swap_chain);
 
-        const vertex_buffer = try VertexBuffer.init(physical_device, device);
-
         const command_pool = try createCommandPool(device, indices);
+
+        const vertex_buffer = try VertexBuffer.init(physical_device, device, graphics_queue, command_pool);
 
         const command_buffers = try createCommandBuffers(
             allocator,
@@ -1205,21 +1206,49 @@ const VertexBuffer = struct {
     buffer: VkBuffer,
     memory: VkDeviceMemory,
 
-    fn init(physical_device: VkPhysicalDevice, device: VkDevice) !Self {
+    fn init(
+        physical_device: VkPhysicalDevice,
+        device: VkDevice,
+        graphics_queue: VkQueue,
+        command_pool: VkCommandPool,
+    ) !Self {
         const buffer_size = @sizeOf(Vertex) * vertices.len;
-        const usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        const properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-        var buffer: VkBuffer = undefined;
-        var memory: VkDeviceMemory = undefined;
-        try createBuffer(physical_device, device, buffer_size, usage, properties, &buffer, &memory);
+        var staging_buffer: VkBuffer = undefined;
+        var staging_memory: VkDeviceMemory = undefined;
+        try createBuffer(
+            physical_device,
+            device,
+            buffer_size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &staging_buffer,
+            &staging_memory,
+        );
 
         var data: ?*c_void = undefined;
-        try checkSuccess(vkMapMemory(device, memory, 0, buffer_size, 0, &data), error.VulkanMapMemoryError);
+        try checkSuccess(vkMapMemory(device, staging_memory, 0, buffer_size, 0, &data), error.VulkanMapMemoryError);
         @memcpy(@ptrCast([*]u8, data), @ptrCast([*]align(4) const u8, &vertices), buffer_size);
-        vkUnmapMemory(device, memory);
+        vkUnmapMemory(device, staging_memory);
 
-        return Self{ .buffer = buffer, .memory = memory };
+        var vertex_buffer: VkBuffer = undefined;
+        var vertex_memory: VkDeviceMemory = undefined;
+        try createBuffer(
+            physical_device,
+            device,
+            buffer_size,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            &vertex_buffer,
+            &vertex_memory,
+        );
+
+        try copyBuffer(device, graphics_queue, command_pool, staging_buffer, vertex_buffer, buffer_size);
+
+        vkDestroyBuffer(device, staging_buffer, null);
+        vkFreeMemory(device, staging_memory, null);
+
+        return Self{ .buffer = vertex_buffer, .memory = vertex_memory };
     }
 
     fn deinit(self: Self, device: VkDevice) void {
@@ -1227,6 +1256,66 @@ const VertexBuffer = struct {
         vkFreeMemory(device, self.memory, null);
     }
 };
+
+fn copyBuffer(device: VkDevice, graphics_queue: VkQueue, command_pool: VkCommandPool, src: VkBuffer, dst: VkBuffer, size: VkDeviceSize) !void {
+    // OPTIMIZE: Create separate command pool for short lived buffers
+    const alloc_info = VkCommandBufferAllocateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = null,
+        .level = VkCommandBufferLevel.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandPool = command_pool,
+        .commandBufferCount = 1,
+    };
+    var command_buffer: VkCommandBuffer = undefined;
+    try vk.allocateCommandBuffers(device, alloc_info, &command_buffer);
+
+    // TODO vulkan.zig
+    const begin_info = VkCommandBufferBeginInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = null,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = null,
+    };
+
+    try checkSuccess(
+        vkBeginCommandBuffer(command_buffer, &begin_info),
+        error.VulkanBeginCommandBufferFailure,
+    );
+
+    const copy_region = VkBufferCopy{
+        .srcOffset = 0,
+        .dstOffset = 0,
+        .size = size,
+    };
+    vkCmdCopyBuffer(command_buffer, src, dst, 1, &copy_region);
+    try checkSuccess(
+        vkEndCommandBuffer(command_buffer),
+        error.VulkanCommandBufferEndFailure,
+    );
+
+    // TODO vulkan.zig
+    const submit_info = VkSubmitInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = null,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = null,
+        .pWaitDstStageMask = null,
+        .signalSemaphoreCount = 0,
+        .pSignalSemaphores = null,
+    };
+
+    try checkSuccess(
+        vkQueueSubmit(graphics_queue, 1, &submit_info, null),
+        error.VulkanQueueSubmitFailure,
+    );
+    try checkSuccess(
+        vkQueueWaitIdle(graphics_queue),
+        error.VulkanQueueWaitIdleFailure,
+    );
+    vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
+}
 
 fn findMemoryType(physical_device: VkPhysicalDevice, type_filter: u32, properties: VkMemoryPropertyFlags) !u32 {
     var mem_props: VkPhysicalDeviceMemoryProperties = undefined;
