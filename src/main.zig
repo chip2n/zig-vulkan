@@ -233,10 +233,7 @@ const RenderContext = struct {
             error.VulkanResetFencesFailure,
         );
 
-        try checkSuccess(
-            vkQueueSubmit(vulkan.graphics_queue, 1, &submit_info, vulkan.sync.in_flight_fences[current_frame]),
-            error.VulkanQueueSubmitFailure,
-        );
+        try vk.queueSubmit(vulkan.graphics_queue, 1, &submit_info, vulkan.sync.in_flight_fences[current_frame]);
 
         const swap_chains = [_]VkSwapchainKHR{vulkan.swap_chain.swap_chain};
         const present_info = VkPresentInfoKHR{
@@ -1044,7 +1041,7 @@ fn createCommandBuffers(
         .commandBufferCount = @intCast(u32, buffers.len),
     };
 
-    try vk.allocateCommandBuffers(device, alloc_info, buffers.ptr);
+    try vk.allocateCommandBuffers(device, &alloc_info, buffers.ptr);
 
     for (buffers) |buffer, i| {
         const begin_info = VkCommandBufferBeginInfo{
@@ -1053,10 +1050,7 @@ fn createCommandBuffers(
             .flags = 0,
             .pInheritanceInfo = null,
         };
-        try checkSuccess(
-            vkBeginCommandBuffer(buffer, &begin_info),
-            error.VulkanBeginCommandBufferFailure,
-        );
+        try vk.beginCommandBuffer(buffer, &begin_info);
 
         const clear_color = [_]VkClearValue{VkClearValue{
             .color = VkClearColorValue{ .float32 = [_]f32{ 0.0, 0.0, 0.0, 1.0 } },
@@ -1083,10 +1077,7 @@ fn createCommandBuffers(
         vkCmdDraw(buffer, vertices.len, 1, 0, 0);
         vkCmdEndRenderPass(buffer);
 
-        try checkSuccess(
-            vkEndCommandBuffer(buffer),
-            error.VulkanCommandBufferEndFailure,
-        );
+        try vk.endCommandBuffer(buffer);
     }
 
     return buffers;
@@ -1254,7 +1245,14 @@ const VertexBuffer = struct {
     }
 };
 
-fn copyBuffer(device: VkDevice, graphics_queue: VkQueue, command_pool: VkCommandPool, src: VkBuffer, dst: VkBuffer, size: VkDeviceSize) !void {
+fn copyBuffer(
+    device: VkDevice,
+    graphics_queue: VkQueue,
+    command_pool: VkCommandPool,
+    src: VkBuffer,
+    dst: VkBuffer,
+    size: VkDeviceSize,
+) !void {
     // OPTIMIZE: Create separate command pool for short lived buffers
     const alloc_info = VkCommandBufferAllocateInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1264,9 +1262,8 @@ fn copyBuffer(device: VkDevice, graphics_queue: VkQueue, command_pool: VkCommand
         .commandBufferCount = 1,
     };
     var command_buffer: VkCommandBuffer = undefined;
-    try vk.allocateCommandBuffers(device, alloc_info, &command_buffer);
+    try vk.allocateCommandBuffers(device, &alloc_info, &command_buffer);
 
-    // TODO vulkan.zig
     const begin_info = VkCommandBufferBeginInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .pNext = null,
@@ -1274,23 +1271,12 @@ fn copyBuffer(device: VkDevice, graphics_queue: VkQueue, command_pool: VkCommand
         .pInheritanceInfo = null,
     };
 
-    try checkSuccess(
-        vkBeginCommandBuffer(command_buffer, &begin_info),
-        error.VulkanBeginCommandBufferFailure,
-    );
+    try vk.beginCommandBuffer(command_buffer, &begin_info);
 
-    const copy_region = VkBufferCopy{
-        .srcOffset = 0,
-        .dstOffset = 0,
-        .size = size,
-    };
+    const copy_region = VkBufferCopy{ .srcOffset = 0, .dstOffset = 0, .size = size };
     vkCmdCopyBuffer(command_buffer, src, dst, 1, &copy_region);
-    try checkSuccess(
-        vkEndCommandBuffer(command_buffer),
-        error.VulkanCommandBufferEndFailure,
-    );
+    try vk.endCommandBuffer(command_buffer);
 
-    // TODO vulkan.zig
     const submit_info = VkSubmitInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = null,
@@ -1303,14 +1289,8 @@ fn copyBuffer(device: VkDevice, graphics_queue: VkQueue, command_pool: VkCommand
         .pSignalSemaphores = null,
     };
 
-    try checkSuccess(
-        vkQueueSubmit(graphics_queue, 1, &submit_info, null),
-        error.VulkanQueueSubmitFailure,
-    );
-    try checkSuccess(
-        vkQueueWaitIdle(graphics_queue),
-        error.VulkanQueueWaitIdleFailure,
-    );
+    try vk.queueSubmit(graphics_queue, 1, &submit_info, null);
+    try vk.queueWaitIdle(graphics_queue);
     vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
 }
 
