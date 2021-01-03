@@ -23,6 +23,42 @@ const device_extensions = [_][*:0]const u8{
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
+const Vertex = struct {
+    pos: vec2,
+    color: vec3,
+
+    fn getBindingDescription() VkVertexInputBindingDescription {
+        return VkVertexInputBindingDescription{
+            .binding = 0,
+            .stride = @sizeOf(Vertex),
+            .inputRate = VkVertexInputRate.VK_VERTEX_INPUT_RATE_VERTEX,
+        };
+    }
+
+    fn getAttributeDescriptions() [2]VkVertexInputAttributeDescription {
+        return [2]VkVertexInputAttributeDescription{
+            VkVertexInputAttributeDescription{
+                .binding = 0,
+                .location = 0,
+                .format = VkFormat.VK_FORMAT_R32G32_SFLOAT,
+                .offset = @byteOffsetOf(Vertex, "pos"),
+            },
+            VkVertexInputAttributeDescription{
+                .binding = 0,
+                .location = 1,
+                .format = VkFormat.VK_FORMAT_R32G32B32_SFLOAT,
+                .offset = @byteOffsetOf(Vertex, "color"),
+            },
+        };
+    }
+};
+
+const vertices = [_]Vertex{
+    Vertex{ .pos = vec2{ 0.0, -0.5 }, .color = vec3{ 1.0, 0.0, 0.0 } },
+    Vertex{ .pos = vec2{ 0.5, 0.5 }, .color = vec3{ 0.0, 1.0, 0.0 } },
+    Vertex{ .pos = vec2{ -0.5, 0.5 }, .color = vec3{ 0.0, 0.0, 1.0 } },
+};
+
 pub fn main() !void {
     var system = System().init();
     defer system.deinit();
@@ -241,6 +277,8 @@ const Vulkan = struct {
     command_pool: VkCommandPool,
     command_buffers: []VkCommandBuffer,
     sync: VulkanSynchronization,
+    vertex_buffer: VkBuffer,
+    vertex_buffer_memory: VkDeviceMemory,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     // TODO: use errdefer to clean up stuff in case of errors
@@ -333,6 +371,39 @@ const Vulkan = struct {
 
         const swap_chain_framebuffers = try createFramebuffers(allocator, device, render_pass, swap_chain);
 
+        // -----------------------------------------------------------------------
+        const vertex_buffer = try createVertexBuffer(device);
+        var mem_reqs: VkMemoryRequirements = undefined;
+        vkGetBufferMemoryRequirements(device, vertex_buffer, &mem_reqs);
+        const alloc_info = VkMemoryAllocateInfo{
+            .sType = VkStructureType.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = null,
+            .allocationSize = mem_reqs.size,
+            .memoryTypeIndex = try findMemoryType(
+                physical_device,
+                mem_reqs.memoryTypeBits,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            ),
+        };
+        var vertex_buffer_memory: VkDeviceMemory = undefined;
+        try checkSuccess(
+            vkAllocateMemory(device, &alloc_info, null, &vertex_buffer_memory),
+            error.VulkanAllocateMemoryFailure,
+        );
+        try checkSuccess(
+            vkBindBufferMemory(device, vertex_buffer, vertex_buffer_memory, 0),
+            error.VulkanBindBufferMemoryFailure,
+        );
+        var data: ?*c_void = undefined;
+        const buffer_size = @sizeOf(Vertex) * vertices.len;
+        try checkSuccess(
+            vkMapMemory(device, vertex_buffer_memory, 0, buffer_size, 0, &data),
+            error.VulkanMapMemoryError,
+        );
+        @memcpy(@ptrCast([*]u8, data), @ptrCast([*]align(4) const u8, &vertices), buffer_size);
+        vkUnmapMemory(device, vertex_buffer_memory);
+        // -----------------------------------------------------------------------
+
         const command_pool = try createCommandPool(device, indices);
 
         const command_buffers = try createCommandBuffers(
@@ -343,10 +414,11 @@ const Vulkan = struct {
             swap_chain_framebuffers,
             swap_chain.extent,
             pipeline.pipeline,
+            vertex_buffer,
         );
 
         var sync = try VulkanSynchronization.init(allocator, device, swap_chain.images.len);
-        errdefer sync.deinit();
+        errdefer sync.deinit(device);
 
         return Vulkan{
             .allocator = allocator,
@@ -364,6 +436,8 @@ const Vulkan = struct {
             .command_pool = command_pool,
             .command_buffers = command_buffers,
             .sync = sync,
+            .vertex_buffer = vertex_buffer,
+            .vertex_buffer_memory = vertex_buffer_memory,
             .debug_messenger = debug_messenger,
         };
     }
@@ -375,6 +449,9 @@ const Vulkan = struct {
         }
 
         self.cleanUpSwapChain();
+
+        vkDestroyBuffer(self.device, self.vertex_buffer, null);
+        vkFreeMemory(self.device, self.vertex_buffer_memory, null);
 
         self.sync.deinit(self.device);
 
@@ -451,6 +528,7 @@ const Vulkan = struct {
             self.swap_chain_framebuffers,
             self.swap_chain.extent,
             self.pipeline.pipeline,
+            self.vertex_buffer
         );
     }
 };
@@ -701,14 +779,16 @@ const Pipeline = struct {
 
         const shader_stages = [_]VkPipelineShaderStageCreateInfo{ vert_stage_info, frag_stage_info };
 
+        const binding_desc = Vertex.getBindingDescription();
+        const attr_descs = Vertex.getAttributeDescriptions();
         const vertex_input_info = VkPipelineVertexInputStateCreateInfo{
             .sType = VkStructureType.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
-            .vertexBindingDescriptionCount = 0,
-            .pVertexBindingDescriptions = null,
-            .vertexAttributeDescriptionCount = 0,
-            .pVertexAttributeDescriptions = null,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &binding_desc,
+            .vertexAttributeDescriptionCount = attr_descs.len,
+            .pVertexAttributeDescriptions = &attr_descs,
         };
 
         const input_assembly_info = VkPipelineInputAssemblyStateCreateInfo{
@@ -984,6 +1064,7 @@ fn createCommandBuffers(
     framebuffers: []VkFramebuffer,
     swap_chain_extent: VkExtent2D,
     graphics_pipeline: VkPipeline,
+    vertex_buffer: VkBuffer,
 ) ![]VkCommandBuffer {
     var buffers = try allocator.alloc(VkCommandBuffer, framebuffers.len);
     errdefer allocator.free(buffers);
@@ -1031,7 +1112,11 @@ fn createCommandBuffers(
 
         vkCmdBeginRenderPass(buffer, &render_pass_info, VkSubpassContents.VK_SUBPASS_CONTENTS_INLINE);
         vkCmdBindPipeline(buffer, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        vkCmdDraw(buffer, 3, 1, 0, 0);
+
+        const vertex_buffers = [_]VkBuffer{vertex_buffer};
+        const offsets = [_]VkDeviceSize{0};
+        vkCmdBindVertexBuffers(buffer, 0, 1, &vertex_buffers, &offsets);
+        vkCmdDraw(buffer, vertices.len, 1, 0, 0);
         vkCmdEndRenderPass(buffer);
 
         try checkSuccess(
@@ -1143,10 +1228,39 @@ fn createFence(device: VkDevice) !VkFence {
         .flags = VK_FENCE_CREATE_SIGNALED_BIT,
     };
 
-    try checkSuccess(
-        vkCreateFence(device, &info, null, &fence),
-        error.VulkanFenceCreationFailed,
-    );
+    try checkSuccess(vkCreateFence(device, &info, null, &fence), error.VulkanFenceCreationFailed);
 
     return fence;
+}
+
+fn createVertexBuffer(device: VkDevice) !VkBuffer {
+    const info = VkBufferCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .size = @sizeOf(Vertex) * vertices.len,
+        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .sharingMode = VkSharingMode.VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = null,
+    };
+    var buffer: VkBuffer = undefined;
+    try checkSuccess(vkCreateBuffer(device, &info, null, &buffer), error.VulkanVertexBufferCreationFailed);
+    return buffer;
+}
+
+fn findMemoryType(physical_device: VkPhysicalDevice, type_filter: u32, properties: VkMemoryPropertyFlags) !u32 {
+    var mem_props: VkPhysicalDeviceMemoryProperties = undefined;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
+
+    var i: u32 = 0;
+    while (i < mem_props.memoryTypeCount) : (i += 1) {
+        if (type_filter & (@intCast(u32, 1) << @intCast(u5, i)) != 0 and
+            (mem_props.memoryTypes[i].propertyFlags & properties) == properties)
+        {
+            return i;
+        }
+    }
+
+    return error.VulkanSuitableMemoryTypeNotFound;
 }
