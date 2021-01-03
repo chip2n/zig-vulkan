@@ -25,8 +25,8 @@ const device_extensions = [_][*:0]const u8{
 };
 
 const Vertex = struct {
-    pos: vec2,
-    color: vec3,
+    pos: Vec2,
+    color: Vec3,
 
     fn getBindingDescription() VkVertexInputBindingDescription {
         return VkVertexInputBindingDescription{
@@ -55,10 +55,10 @@ const Vertex = struct {
 };
 
 const vertices = [_]Vertex{
-    Vertex{ .pos = vec2{ -0.5, -0.5 }, .color = vec3{ 1.0, 0.0, 0.0 } },
-    Vertex{ .pos = vec2{ 0.5, -0.5 }, .color = vec3{ 0.0, 1.0, 0.0 } },
-    Vertex{ .pos = vec2{ 0.5, 0.5 }, .color = vec3{ 0.0, 0.0, 1.0 } },
-    Vertex{ .pos = vec2{ -0.5, 0.5 }, .color = vec3{ 1.0, 1.0, 1.0 } },
+    Vertex{ .pos = Vec2{ -0.5, -0.5 }, .color = Vec3{ 1.0, 0.0, 0.0 } },
+    Vertex{ .pos = Vec2{ 0.5, -0.5 }, .color = Vec3{ 0.0, 1.0, 0.0 } },
+    Vertex{ .pos = Vec2{ 0.5, 0.5 }, .color = Vec3{ 0.0, 0.0, 1.0 } },
+    Vertex{ .pos = Vec2{ -0.5, 0.5 }, .color = Vec3{ 1.0, 1.0, 1.0 } },
 };
 
 const v_indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
