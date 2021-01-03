@@ -1044,10 +1044,7 @@ fn createCommandBuffers(
         .commandBufferCount = @intCast(u32, buffers.len),
     };
 
-    try checkSuccess(
-        vkAllocateCommandBuffers(device, &alloc_info, buffers.ptr),
-        error.VulkanCommanbBufferAllocationFailure,
-    );
+    try vk.allocateCommandBuffers(device, alloc_info, buffers.ptr);
 
     for (buffers) |buffer, i| {
         const begin_info = VkCommandBufferBeginInfo{

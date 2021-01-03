@@ -4,7 +4,7 @@ usingnamespace @import("utils.zig");
 pub fn allocateCommandBuffers(
     device: VkDevice,
     info: VkCommandBufferAllocateInfo,
-    buffers: *VkCommandBuffer,
+    buffers: [*c] VkCommandBuffer,
 ) !void {
     try checkSuccess(
         vkAllocateCommandBuffers(device, &info, buffers),
