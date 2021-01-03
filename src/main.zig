@@ -277,8 +277,7 @@ const Vulkan = struct {
     command_pool: VkCommandPool,
     command_buffers: []VkCommandBuffer,
     sync: VulkanSynchronization,
-    vertex_buffer: VkBuffer,
-    vertex_buffer_memory: VkDeviceMemory,
+    vertex_buffer: VertexBuffer,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     // TODO: use errdefer to clean up stuff in case of errors
@@ -371,38 +370,7 @@ const Vulkan = struct {
 
         const swap_chain_framebuffers = try createFramebuffers(allocator, device, render_pass, swap_chain);
 
-        // -----------------------------------------------------------------------
-        const vertex_buffer = try createVertexBuffer(device);
-        var mem_reqs: VkMemoryRequirements = undefined;
-        vkGetBufferMemoryRequirements(device, vertex_buffer, &mem_reqs);
-        const alloc_info = VkMemoryAllocateInfo{
-            .sType = VkStructureType.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .pNext = null,
-            .allocationSize = mem_reqs.size,
-            .memoryTypeIndex = try findMemoryType(
-                physical_device,
-                mem_reqs.memoryTypeBits,
-                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            ),
-        };
-        var vertex_buffer_memory: VkDeviceMemory = undefined;
-        try checkSuccess(
-            vkAllocateMemory(device, &alloc_info, null, &vertex_buffer_memory),
-            error.VulkanAllocateMemoryFailure,
-        );
-        try checkSuccess(
-            vkBindBufferMemory(device, vertex_buffer, vertex_buffer_memory, 0),
-            error.VulkanBindBufferMemoryFailure,
-        );
-        var data: ?*c_void = undefined;
-        const buffer_size = @sizeOf(Vertex) * vertices.len;
-        try checkSuccess(
-            vkMapMemory(device, vertex_buffer_memory, 0, buffer_size, 0, &data),
-            error.VulkanMapMemoryError,
-        );
-        @memcpy(@ptrCast([*]u8, data), @ptrCast([*]align(4) const u8, &vertices), buffer_size);
-        vkUnmapMemory(device, vertex_buffer_memory);
-        // -----------------------------------------------------------------------
+        const vertex_buffer = try VertexBuffer.init(physical_device, device);
 
         const command_pool = try createCommandPool(device, indices);
 
@@ -414,7 +382,7 @@ const Vulkan = struct {
             swap_chain_framebuffers,
             swap_chain.extent,
             pipeline.pipeline,
-            vertex_buffer,
+            vertex_buffer.buffer,
         );
 
         var sync = try VulkanSynchronization.init(allocator, device, swap_chain.images.len);
@@ -437,7 +405,6 @@ const Vulkan = struct {
             .command_buffers = command_buffers,
             .sync = sync,
             .vertex_buffer = vertex_buffer,
-            .vertex_buffer_memory = vertex_buffer_memory,
             .debug_messenger = debug_messenger,
         };
     }
@@ -450,8 +417,7 @@ const Vulkan = struct {
 
         self.cleanUpSwapChain();
 
-        vkDestroyBuffer(self.device, self.vertex_buffer, null);
-        vkFreeMemory(self.device, self.vertex_buffer_memory, null);
+        self.vertex_buffer.deinit(self.device);
 
         self.sync.deinit(self.device);
 
@@ -528,7 +494,7 @@ const Vulkan = struct {
             self.swap_chain_framebuffers,
             self.swap_chain.extent,
             self.pipeline.pipeline,
-            self.vertex_buffer
+            self.vertex_buffer.buffer,
         );
     }
 };
@@ -1233,21 +1199,34 @@ fn createFence(device: VkDevice) !VkFence {
     return fence;
 }
 
-fn createVertexBuffer(device: VkDevice) !VkBuffer {
-    const info = VkBufferCreateInfo{
-        .sType = VkStructureType.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .pNext = null,
-        .flags = 0,
-        .size = @sizeOf(Vertex) * vertices.len,
-        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        .sharingMode = VkSharingMode.VK_SHARING_MODE_EXCLUSIVE,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = null,
-    };
-    var buffer: VkBuffer = undefined;
-    try checkSuccess(vkCreateBuffer(device, &info, null, &buffer), error.VulkanVertexBufferCreationFailed);
-    return buffer;
-}
+const VertexBuffer = struct {
+    const Self = @This();
+
+    buffer: VkBuffer,
+    memory: VkDeviceMemory,
+
+    fn init(physical_device: VkPhysicalDevice, device: VkDevice) !Self {
+        const buffer_size = @sizeOf(Vertex) * vertices.len;
+        const usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        const properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+        var buffer: VkBuffer = undefined;
+        var memory: VkDeviceMemory = undefined;
+        try createBuffer(physical_device, device, buffer_size, usage, properties, &buffer, &memory);
+
+        var data: ?*c_void = undefined;
+        try checkSuccess(vkMapMemory(device, memory, 0, buffer_size, 0, &data), error.VulkanMapMemoryError);
+        @memcpy(@ptrCast([*]u8, data), @ptrCast([*]align(4) const u8, &vertices), buffer_size);
+        vkUnmapMemory(device, memory);
+
+        return Self{ .buffer = buffer, .memory = memory };
+    }
+
+    fn deinit(self: Self, device: VkDevice) void {
+        vkDestroyBuffer(device, self.buffer, null);
+        vkFreeMemory(device, self.memory, null);
+    }
+};
 
 fn findMemoryType(physical_device: VkPhysicalDevice, type_filter: u32, properties: VkMemoryPropertyFlags) !u32 {
     var mem_props: VkPhysicalDeviceMemoryProperties = undefined;
@@ -1263,4 +1242,40 @@ fn findMemoryType(physical_device: VkPhysicalDevice, type_filter: u32, propertie
     }
 
     return error.VulkanSuitableMemoryTypeNotFound;
+}
+
+fn createBuffer(
+    physical_device: VkPhysicalDevice,
+    device: VkDevice,
+    size: VkDeviceSize,
+    usage: VkBufferUsageFlags,
+    properties: VkMemoryPropertyFlags,
+    buffer: *VkBuffer,
+    buffer_memory: *VkDeviceMemory,
+) !void {
+    const info = VkBufferCreateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .size = size,
+        .usage = usage,
+        .sharingMode = VkSharingMode.VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = null,
+    };
+
+    try checkSuccess(vkCreateBuffer(device, &info, null, buffer), error.VulkanVertexBufferCreationFailed);
+
+    var mem_reqs: VkMemoryRequirements = undefined;
+    vkGetBufferMemoryRequirements(device, buffer.*, &mem_reqs);
+
+    const alloc_info = VkMemoryAllocateInfo{
+        .sType = VkStructureType.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = null,
+        .allocationSize = mem_reqs.size,
+        .memoryTypeIndex = try findMemoryType(physical_device, mem_reqs.memoryTypeBits, properties),
+    };
+
+    try checkSuccess(vkAllocateMemory(device, &alloc_info, null, buffer_memory), error.VulkanAllocateMemoryFailure);
+    try checkSuccess(vkBindBufferMemory(device, buffer.*, buffer_memory.*, 0), error.VulkanBindBufferMemoryFailure);
 }
