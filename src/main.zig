@@ -55,10 +55,13 @@ const Vertex = struct {
 };
 
 const vertices = [_]Vertex{
-    Vertex{ .pos = vec2{ 0.0, -0.5 }, .color = vec3{ 1.0, 0.0, 0.0 } },
-    Vertex{ .pos = vec2{ 0.5, 0.5 }, .color = vec3{ 0.0, 1.0, 0.0 } },
-    Vertex{ .pos = vec2{ -0.5, 0.5 }, .color = vec3{ 0.0, 0.0, 1.0 } },
+    Vertex{ .pos = vec2{ -0.5, -0.5 }, .color = vec3{ 1.0, 0.0, 0.0 } },
+    Vertex{ .pos = vec2{ 0.5, -0.5 }, .color = vec3{ 0.0, 1.0, 0.0 } },
+    Vertex{ .pos = vec2{ 0.5, 0.5 }, .color = vec3{ 0.0, 0.0, 1.0 } },
+    Vertex{ .pos = vec2{ -0.5, 0.5 }, .color = vec3{ 1.0, 1.0, 1.0 } },
 };
+
+const v_indices = [_]u16{ 0, 1, 2, 2, 3, 0 };
 
 pub fn main() !void {
     var system = System().init();
@@ -276,6 +279,7 @@ const Vulkan = struct {
     command_buffers: []VkCommandBuffer,
     sync: VulkanSynchronization,
     vertex_buffer: VertexBuffer,
+    index_buffer: IndexBuffer,
     debug_messenger: ?VkDebugUtilsMessengerEXT,
 
     // TODO: use errdefer to clean up stuff in case of errors
@@ -370,7 +374,8 @@ const Vulkan = struct {
 
         const command_pool = try createCommandPool(device, indices);
 
-        const vertex_buffer = try VertexBuffer.init(physical_device, device, graphics_queue, command_pool);
+        const vertex_buffer = try VertexBuffer.init(physical_device, device, graphics_queue, command_pool, &vertices);
+        const index_buffer = try IndexBuffer.init(physical_device, device, graphics_queue, command_pool, &v_indices);
 
         const command_buffers = try createCommandBuffers(
             allocator,
@@ -380,7 +385,8 @@ const Vulkan = struct {
             swap_chain_framebuffers,
             swap_chain.extent,
             pipeline.pipeline,
-            vertex_buffer.buffer,
+            vertex_buffer,
+            index_buffer,
         );
 
         var sync = try VulkanSynchronization.init(allocator, device, swap_chain.images.len);
@@ -403,6 +409,7 @@ const Vulkan = struct {
             .command_buffers = command_buffers,
             .sync = sync,
             .vertex_buffer = vertex_buffer,
+            .index_buffer = index_buffer,
             .debug_messenger = debug_messenger,
         };
     }
@@ -416,6 +423,7 @@ const Vulkan = struct {
         self.cleanUpSwapChain();
 
         self.vertex_buffer.deinit(self.device);
+        self.index_buffer.deinit(self.device);
 
         self.sync.deinit(self.device);
 
@@ -492,7 +500,8 @@ const Vulkan = struct {
             self.swap_chain_framebuffers,
             self.swap_chain.extent,
             self.pipeline.pipeline,
-            self.vertex_buffer.buffer,
+            self.vertex_buffer,
+            self.index_buffer,
         );
     }
 };
@@ -1028,7 +1037,8 @@ fn createCommandBuffers(
     framebuffers: []VkFramebuffer,
     swap_chain_extent: VkExtent2D,
     graphics_pipeline: VkPipeline,
-    vertex_buffer: VkBuffer,
+    vertex_buffer: VertexBuffer,
+    index_buffer: IndexBuffer,
 ) ![]VkCommandBuffer {
     var buffers = try allocator.alloc(VkCommandBuffer, framebuffers.len);
     errdefer allocator.free(buffers);
@@ -1071,10 +1081,11 @@ fn createCommandBuffers(
         vkCmdBeginRenderPass(buffer, &render_pass_info, VkSubpassContents.VK_SUBPASS_CONTENTS_INLINE);
         vkCmdBindPipeline(buffer, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
 
-        const vertex_buffers = [_]VkBuffer{vertex_buffer};
+        const vertex_buffers = [_]VkBuffer{vertex_buffer.buffer};
         const offsets = [_]VkDeviceSize{0};
         vkCmdBindVertexBuffers(buffer, 0, 1, &vertex_buffers, &offsets);
-        vkCmdDraw(buffer, vertices.len, 1, 0, 0);
+        vkCmdBindIndexBuffer(buffer, index_buffer.buffer, 0, VkIndexType.VK_INDEX_TYPE_UINT16);
+        vkCmdDrawIndexed(buffer, @intCast(u32, index_buffer.len), 1, 0, 0, 0);
         vkCmdEndRenderPass(buffer);
 
         try vk.endCommandBuffer(buffer);
@@ -1188,67 +1199,79 @@ fn createFence(device: VkDevice) !VkFence {
     return fence;
 }
 
-const VertexBuffer = struct {
-    const Self = @This();
+const VertexBuffer = Buffer(Vertex, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+const IndexBuffer = Buffer(u16, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-    buffer: VkBuffer,
-    memory: VkDeviceMemory,
+fn Buffer(comptime T: type, usage: c_int) type {
+    return struct {
+        const Self = @This();
 
-    fn init(
-        physical_device: VkPhysicalDevice,
-        device: VkDevice,
-        graphics_queue: VkQueue,
-        command_pool: VkCommandPool,
-    ) !Self {
-        const buffer_size = @sizeOf(Vertex) * vertices.len;
+        buffer: VkBuffer,
+        memory: VkDeviceMemory,
+        len: usize,
 
-        var staging_buffer: VkBuffer = undefined;
-        var staging_memory: VkDeviceMemory = undefined;
-        try createBuffer(
-            physical_device,
-            device,
-            buffer_size,
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            &staging_buffer,
-            &staging_memory,
-        );
-        defer {
-            vkDestroyBuffer(device, staging_buffer, null);
-            vkFreeMemory(device, staging_memory, null);
+        fn init(
+            physical_device: VkPhysicalDevice,
+            device: VkDevice,
+            graphics_queue: VkQueue,
+            command_pool: VkCommandPool,
+            content: []const T,
+        ) !Self {
+            const buffer_size = @sizeOf(T) * content.len;
+
+            var staging_buffer: VkBuffer = undefined;
+            var staging_memory: VkDeviceMemory = undefined;
+            try createBuffer(
+                physical_device,
+                device,
+                buffer_size,
+                VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                &staging_buffer,
+                &staging_memory,
+            );
+            defer {
+                vkDestroyBuffer(device, staging_buffer, null);
+                vkFreeMemory(device, staging_memory, null);
+            }
+
+            var data: ?*c_void = undefined;
+            try checkSuccess(vkMapMemory(device, staging_memory, 0, buffer_size, 0, &data), error.VulkanMapMemoryError);
+            const bytes = @ptrCast([*]const u8, @alignCast(@alignOf(T), std.mem.sliceAsBytes(content)));
+            @memcpy(@ptrCast([*]u8, data), bytes, buffer_size);
+            vkUnmapMemory(device, staging_memory);
+
+            var buffer: VkBuffer = undefined;
+            var memory: VkDeviceMemory = undefined;
+            try createBuffer(
+                physical_device,
+                device,
+                buffer_size,
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | usage,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                &buffer,
+                &memory,
+            );
+            errdefer {
+                vkDestroyBuffer(device, buffer, null);
+                vkFreeMemory(device, memory, null);
+            }
+
+            try copyBuffer(device, graphics_queue, command_pool, staging_buffer, buffer, buffer_size);
+
+            return Self{
+                .buffer = buffer,
+                .memory = memory,
+                .len = content.len,
+            };
         }
 
-        var data: ?*c_void = undefined;
-        try checkSuccess(vkMapMemory(device, staging_memory, 0, buffer_size, 0, &data), error.VulkanMapMemoryError);
-        @memcpy(@ptrCast([*]u8, data), @ptrCast([*]align(4) const u8, &vertices), buffer_size);
-        vkUnmapMemory(device, staging_memory);
-
-        var vertex_buffer: VkBuffer = undefined;
-        var vertex_memory: VkDeviceMemory = undefined;
-        try createBuffer(
-            physical_device,
-            device,
-            buffer_size,
-            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            &vertex_buffer,
-            &vertex_memory,
-        );
-        errdefer {
-            vkDestroyBuffer(device, vertex_buffer, null);
-            vkFreeMemory(device, vertex_memory, null);
+        fn deinit(self: Self, device: VkDevice) void {
+            vkDestroyBuffer(device, self.buffer, null);
+            vkFreeMemory(device, self.memory, null);
         }
-
-        try copyBuffer(device, graphics_queue, command_pool, staging_buffer, vertex_buffer, buffer_size);
-
-        return Self{ .buffer = vertex_buffer, .memory = vertex_memory };
-    }
-
-    fn deinit(self: Self, device: VkDevice) void {
-        vkDestroyBuffer(device, self.buffer, null);
-        vkFreeMemory(device, self.memory, null);
-    }
-};
+    };
+}
 
 fn copyBuffer(
     device: VkDevice,
@@ -1351,6 +1374,7 @@ fn createBuffer(
     // OPTIMIZE: should not allocate for every individual buffer.
     // allocate a single big chunk of memory and a single buffer, and use offsets instead
     // (or use VulkanMemoryAllocator).
+    // see: https://developer.nvidia.com/vulkan-memory-management
     try checkSuccess(vkAllocateMemory(device, &alloc_info, null, buffer_memory), error.VulkanAllocateMemoryFailure);
     errdefer vkFreeMemory(device, buffer_memory.*, null);
 
