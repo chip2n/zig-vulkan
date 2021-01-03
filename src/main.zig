@@ -1213,6 +1213,10 @@ const VertexBuffer = struct {
             &staging_buffer,
             &staging_memory,
         );
+        defer {
+            vkDestroyBuffer(device, staging_buffer, null);
+            vkFreeMemory(device, staging_memory, null);
+        }
 
         var data: ?*c_void = undefined;
         try checkSuccess(vkMapMemory(device, staging_memory, 0, buffer_size, 0, &data), error.VulkanMapMemoryError);
@@ -1232,9 +1236,6 @@ const VertexBuffer = struct {
         );
 
         try copyBuffer(device, graphics_queue, command_pool, staging_buffer, vertex_buffer, buffer_size);
-
-        vkDestroyBuffer(device, staging_buffer, null);
-        vkFreeMemory(device, staging_memory, null);
 
         return Self{ .buffer = vertex_buffer, .memory = vertex_memory };
     }
