@@ -1234,6 +1234,10 @@ const VertexBuffer = struct {
             &vertex_buffer,
             &vertex_memory,
         );
+        errdefer {
+            vkDestroyBuffer(device, vertex_buffer, null);
+            vkFreeMemory(device, vertex_memory, null);
+        }
 
         try copyBuffer(device, graphics_queue, command_pool, staging_buffer, vertex_buffer, buffer_size);
 
