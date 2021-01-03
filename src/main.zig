@@ -1263,6 +1263,7 @@ fn copyBuffer(
     };
     var command_buffer: VkCommandBuffer = undefined;
     try vk.allocateCommandBuffers(device, &alloc_info, &command_buffer);
+    defer vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
 
     const begin_info = VkCommandBufferBeginInfo{
         .sType = VkStructureType.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1291,7 +1292,6 @@ fn copyBuffer(
 
     try vk.queueSubmit(graphics_queue, 1, &submit_info, null);
     try vk.queueWaitIdle(graphics_queue);
-    vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
 }
 
 fn findMemoryType(physical_device: VkPhysicalDevice, type_filter: u32, properties: VkMemoryPropertyFlags) !u32 {
