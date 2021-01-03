@@ -1348,6 +1348,9 @@ fn createBuffer(
         .memoryTypeIndex = try findMemoryType(physical_device, mem_reqs.memoryTypeBits, properties),
     };
 
+    // OPTIMIZE: should not allocate for every individual buffer.
+    // allocate a single big chunk of memory and a single buffer, and use offsets instead
+    // (or use VulkanMemoryAllocator).
     try checkSuccess(vkAllocateMemory(device, &alloc_info, null, buffer_memory), error.VulkanAllocateMemoryFailure);
     errdefer vkFreeMemory(device, buffer_memory.*, null);
 
