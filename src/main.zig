@@ -1336,6 +1336,7 @@ fn createBuffer(
     };
 
     try checkSuccess(vkCreateBuffer(device, &info, null, buffer), error.VulkanVertexBufferCreationFailed);
+    errdefer vkDestroyBuffer(device, buffer.*, null);
 
     var mem_reqs: VkMemoryRequirements = undefined;
     vkGetBufferMemoryRequirements(device, buffer.*, &mem_reqs);
@@ -1348,5 +1349,7 @@ fn createBuffer(
     };
 
     try checkSuccess(vkAllocateMemory(device, &alloc_info, null, buffer_memory), error.VulkanAllocateMemoryFailure);
+    errdefer vkFreeMemory(device, buffer_memory.*, null);
+
     try checkSuccess(vkBindBufferMemory(device, buffer.*, buffer_memory.*, 0), error.VulkanBindBufferMemoryFailure);
 }
